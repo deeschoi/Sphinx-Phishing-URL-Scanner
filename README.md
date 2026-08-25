@@ -90,26 +90,26 @@ phishing scan --tier A https://example.com   # URL string only, no network fetch
 
 ### Configuration
 
-| Variable | Default | Purpose |
+`.env` at the repo root is loaded at startup and never overrides a real environment variable. Copy from `.env.example`.
+
+| Variable | Default | Notes |
 | --- | --- | --- |
-| `PHISHING_ROOT` | repo root | Base for data, artifacts, and reports |
+| `PHISHING_ROOT` | repo root | Base for data, artifacts, reports |
 | `PHISHING_PHIUSIIL` | `$PHISHING_ROOT/datasets/PhiUSIIL_Phishing_URL_Dataset.csv` | Served-model training table |
-| `PHISHING_DATA` | `$PHISHING_ROOT/Training_Dataset.csv` or `datasets/Training_Dataset.csv` | 2012 UCI table (research scripts) |
-| `PHISHING_ARTIFACTS_DIR` | `$PHISHING_ROOT/artifacts` | Where the served model lives |
-| `PHISHING_REPORTS_DIR` | `$PHISHING_ROOT/reports` | Analysis tables and figures |
-| `PHISHING_DATABASE_URL` | `sqlite:///$PHISHING_ROOT/data/scans.db` | Scan telemetry store |
-| `SPHINX_API_KEY` | unset (routes open) | Shared secret for `/api/scan`, `/api/chat`, `/api/scans`, `/api/stats`, sent as `X-API-Key`. Unused for Groq |
+| `PHISHING_DATA` | `$PHISHING_ROOT/Training_Dataset.csv` or `datasets/…` | 2012 UCI table (research) |
+| `PHISHING_ARTIFACTS_DIR` | `$PHISHING_ROOT/artifacts` | Served model |
+| `PHISHING_REPORTS_DIR` | `$PHISHING_ROOT/reports` | Analysis output |
+| `PHISHING_DATABASE_URL` | `sqlite:///$PHISHING_ROOT/data/scans.db` | Scan telemetry |
+| `SPHINX_API_KEY` | unset | Optional `X-API-Key` on scan/chat/history/stats. Not Groq; a key baked into the UI is not auth |
 | `SPHINX_SCAN_RATE_PER_MINUTE` | `20` | Per-caller scan budget |
-| `SPHINX_SCAN_MAX_CONCURRENT` | `4` | Scans in flight before the API returns 503 |
-| `SPHINX_CHAT_RATE_PER_MINUTE` | `30` | Per-caller chat budget (independent of scans) |
-| `SPHINX_CHAT_MAX_CONCURRENT` | `1` | Chat requests in flight before the API returns 503 |
-| `SPHINX_TRUST_PROXY_HEADERS` | `0` | Honour `X-Forwarded-For` for rate-limit identity. Only behind a proxy you control |
-| `GROQ_API_KEY` | unset | Optional **local/operator fallback**. When unset, chat still works if the browser sends `X-Groq-Api-Key`. A public demo should omit this so visitors are billed, not you |
-| `GROQ_MODEL` | `openai/gpt-oss-120b` | Any tool-calling model Groq serves |
+| `SPHINX_SCAN_MAX_CONCURRENT` | `4` | Extra scans return 503 |
+| `SPHINX_CHAT_RATE_PER_MINUTE` | `30` | Per-caller chat budget |
+| `SPHINX_CHAT_MAX_CONCURRENT` | `1` | Extra chat returns 503 |
+| `SPHINX_TRUST_PROXY_HEADERS` | `0` | Honour `X-Forwarded-For` only behind a proxy you control |
+| `GROQ_API_KEY` | unset | Optional operator fallback. Omit on a public host; visitors can still send `X-Groq-Api-Key` |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Any Groq tool-calling model |
 
-Anything in `.env` at the repo root is loaded at startup and never overrides a real environment variable. `.env` is gitignored; `.env.example` documents every key.
-
-> **Before you expose this to a network.** `POST /api/scan` makes an outbound HTTP request to a URL the caller chooses. Keep the rate limits on and put it behind a reverse proxy. A shared `SPHINX_API_KEY` in the frontend is extractable; the honest public-demo model is open routes + SSRF guards + tight limits, not a baked-in key. Omit `GROQ_API_KEY` on the host. The compose file publishes port 8000 on `127.0.0.1` only.
+`POST /api/scan` fetches a caller-chosen URL. Keep the rate limits, bind behind a reverse proxy (compose already binds `127.0.0.1:8000`), and omit `GROQ_API_KEY` on public hosts.
 
 ## What a scan does
 
