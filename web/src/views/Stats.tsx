@@ -146,27 +146,27 @@ export function Stats() {
               <div style={{ width: "100%", height: 280 }}>
                 <ResponsiveContainer>
                   <ComposedChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                    <CartesianGrid stroke="#3d3428" strokeDasharray="3 3" />
-                    <XAxis dataKey="date" stroke="#a89478" tick={{ fontSize: 12 }} />
+                    <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" />
+                    <XAxis dataKey="date" stroke="var(--muted)" tick={{ fontSize: 12 }} />
                     <YAxis
                       yAxisId="left"
-                      stroke="#a89478"
+                      stroke="var(--muted)"
                       tick={{ fontSize: 12 }}
                       allowDecimals={false}
                     />
                     <YAxis
                       yAxisId="right"
                       orientation="right"
-                      stroke="#a89478"
+                      stroke="var(--muted)"
                       tick={{ fontSize: 12 }}
                       domain={[0, 100]}
                       tickFormatter={(value: number) => `${value}%`}
                     />
                     <Tooltip
                       contentStyle={{
-                        background: "#251e16",
-                        border: "1px solid #3d3428",
-                        borderRadius: 8,
+                        background: "var(--surface-raised)",
+                        border: "1px solid var(--line)",
+                        borderRadius: 0,
                       }}
                       formatter={(value, name) => {
                         if (name === "meanPct") {
@@ -178,12 +178,12 @@ export function Stats() {
                     <Legend
                       formatter={(value) => (value === "meanPct" ? "Mean probability" : "Scans")}
                     />
-                    <Bar yAxisId="left" dataKey="scans" fill="#d4a04a" radius={[4, 4, 0, 0]} />
+                    <Bar yAxisId="left" dataKey="scans" fill="var(--accent)" radius={0} />
                     <Line
                       yAxisId="right"
                       type="monotone"
                       dataKey="meanPct"
-                      stroke="#f5a524"
+                      stroke="var(--warn)"
                       strokeWidth={2}
                       dot={{ r: 3 }}
                     />

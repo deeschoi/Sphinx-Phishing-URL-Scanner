@@ -8,47 +8,15 @@ const TABS = [
   { to: "/findings", label: "Research findings", end: false },
 ] as const;
 
-function SphinxMark() {
-  return (
-    <svg
-      className="brand-mark"
-      viewBox="0 0 40 40"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      <defs>
-        <linearGradient
-          id="brand-gold"
-          x1="4"
-          y1="2"
-          x2="36"
-          y2="38"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop stopColor="#f0d078" />
-          <stop offset="1" stopColor="#c17a28" />
-        </linearGradient>
-      </defs>
-      <rect width="40" height="40" rx="11" fill="url(#brand-gold)" />
-      <path
-        fill="#160e06"
-        d="M11 9.2h10.2c1.3 0 2.1.9 2.1 2.1v4.1l8.6 2.5c2.1.6 3.3 2.5 3.1 4.6 2.5-1.4 3.1-6 .2-7.2-.2 2 .3 4.4-.8 5.6v5.6H8.6v-2.2H6.2v2.2H4.8v-3.3l3.4-1.5v-5.4L5.1 13.8c-.7-.4-.6-1.5.2-1.8L11 10.8V9.2z"
-      />
-      <circle cx="13.6" cy="13.1" r="0.95" fill="#f0d078" />
-    </svg>
-  );
-}
-
 export function Layout({ children }: { children: ReactNode }) {
   return (
     <>
       <header className="masthead">
         <div className="wrap">
           <div className="brand">
-            <SphinxMark />
             <div>
               <h1>Sphinx</h1>
-              <p className="brand-kicker">URL Phishing Guardian</p>
+              <p className="brand-kicker">phishing scanner</p>
               <p>
                 Sphinx is a live phishing scanner. Paste a URL and it fetches the
                 page, scores the risk with a trained classifier, and shows which
