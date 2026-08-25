@@ -68,12 +68,15 @@ def main() -> int:
         if error:
             failures.append((name, error))
 
-    for path in sorted((ROOT / "analysis").glob("[0-9]*.py")):
-        error = check_script(path)
-        rel = path.relative_to(ROOT)
-        print(f"{'ok  ' if error is None else 'FAIL'} {rel}")
-        if error:
-            failures.append((str(rel), error))
+    for directory in (ROOT / "analysis", ROOT / "research" / "analysis"):
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("[0-9]*.py")):
+            error = check_script(path)
+            rel = path.relative_to(ROOT)
+            print(f"{'ok  ' if error is None else 'FAIL'} {rel}")
+            if error:
+                failures.append((str(rel), error))
 
     if failures:
         print(f"\n{len(failures)} module(s) failed to import:")

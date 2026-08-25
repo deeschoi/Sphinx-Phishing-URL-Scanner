@@ -22,7 +22,7 @@ phishing = "phishing.cli:main"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-exclude = [".venv", "notebooks", "*.ipynb", "web/node_modules", "web/dist"]
+exclude = [".venv", "research/notebooks", "*.ipynb", "web/node_modules", "web/dist"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]

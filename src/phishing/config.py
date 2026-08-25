@@ -27,8 +27,9 @@ PROJECT_ROOT = _path_from_env("PHISHING_ROOT", Path(__file__).resolve().parents[
 DATA_PATH = _path_from_env(
     "PHISHING_DATA",
     _first_existing(
-        PROJECT_ROOT / "Training_Dataset.csv",
+        PROJECT_ROOT / "research" / "datasets" / "Training_Dataset.csv",
         PROJECT_ROOT / "datasets" / "Training_Dataset.csv",
+        PROJECT_ROOT / "Training_Dataset.csv",
     ),
 )
 ARTIFACTS_DIR = _path_from_env("PHISHING_ARTIFACTS_DIR", PROJECT_ROOT / "artifacts")
@@ -165,7 +166,7 @@ RISK_BANDS = [
 ]
 
 # What a live scan must do to obtain each feature. Drives the deployment-tier
-# scenarios in analysis/04 and the scan-coverage reporting in the UI.
+# scenarios in research/analysis/04 and the scan-coverage reporting in the UI.
 SOURCE = {
     **{f: "url_only" for f in TIER_A},
     **{f: "http" for f in TIER_B},
@@ -181,7 +182,7 @@ SOURCE = {
 assert set(SOURCE) == set(FEATURE_COLUMNS)
 
 # Features whose observed phishing rate moves opposite to the documented
-# encoding. Identified by the encoding audit in analysis/03; kept here because
+# encoding. Identified by the encoding audit in research/analysis/03; kept here because
 # the scanner flags them in its explanations.
 REVERSED_FEATURES = [
     "Shortining_Service",

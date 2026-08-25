@@ -13,7 +13,7 @@ The web app brands itself **Sphinx — URL Phishing Guardian**. Four sections:
 | **Stats** | Verdict mix and daily mean score, for spotting drift. Unreachable hosts are excluded from the mean. |
 | **Research findings** | Headline tables from the 2012 UCI analysis that started this project (leakage, encoding, decay). Nothing on that page is used to score a URL. |
 
-This repo began as a DATS 2103 coursework project on the 2012 UCI Phishing Websites table. The original submission is unchanged: [`Choi_Final.ipynb`](Choi_Final.ipynb). The scanner Sphinx serves today is trained on a different dataset.
+This repo began as a DATS 2103 coursework project on the 2012 UCI Phishing Websites table. The original submission is unchanged: [`research/Choi_Final.ipynb`](research/Choi_Final.ipynb). The scanner Sphinx serves today is trained on a different dataset.
 
 How a scan is extracted and guarded, live vs holdout numbers, and how the analyst chat is grounded: **[docs/findings.md](docs/findings.md)**.
 
@@ -98,7 +98,7 @@ phishing scan --tier A https://example.com   # URL string only, no network fetch
 | --- | --- | --- |
 | `PHISHING_ROOT` | repo root | Base for data, artifacts, reports |
 | `PHISHING_PHIUSIIL` | `$PHISHING_ROOT/datasets/PhiUSIIL_Phishing_URL_Dataset.csv` | Served-model training table |
-| `PHISHING_DATA` | `$PHISHING_ROOT/Training_Dataset.csv` or `datasets/…` | 2012 UCI table (research) |
+| `PHISHING_DATA` | `$PHISHING_ROOT/research/datasets/Training_Dataset.csv` | 2012 UCI table (research) |
 | `PHISHING_ARTIFACTS_DIR` | `$PHISHING_ROOT/artifacts` | Served model |
 | `PHISHING_REPORTS_DIR` | `$PHISHING_ROOT/reports` | Analysis output |
 | `PHISHING_DATABASE_URL` | `sqlite:///$PHISHING_ROOT/data/scans.db` | Scan telemetry |
@@ -123,41 +123,33 @@ phishing validate           # 2012 Tier-A drift vs 2026 legitimate URLs
 alembic upgrade head        # apply migrations (the API also creates tables on boot)
 ```
 
-Numbered scripts under `analysis/` write tables and figures to `reports/`. `01`–`05` still run on the 2012 UCI table. `06` trains the PhiUSIIL model Sphinx serves. `07` is the live re-extraction eval in [docs/findings.md](docs/findings.md).
-
-Narrative notebooks for the 2012 stages: [`notebooks/01_honest_baseline.ipynb`](notebooks/01_honest_baseline.ipynb), [`notebooks/02_feature_decay.ipynb`](notebooks/02_feature_decay.ipynb), [`notebooks/03_rule_mining.ipynb`](notebooks/03_rule_mining.ipynb).
+Numbered scripts under `analysis/` train the served model (`06`) and run the live re-extraction eval (`07`; see [docs/findings.md](docs/findings.md)). The 2012 UCI scripts and notebooks live under [`research/`](research/README.md).
 
 ## Repo map
 
 ```text
-datasets/
-  PhiUSIIL_Phishing_URL_Dataset.csv   served-model training table (2023)
-  Training_Dataset.csv                UCI 2012 table (research)
-Choi_Final.ipynb                      original coursework (untouched)
-src/phishing/
-  fit.py                              train the PhiUSIIL scanner model
-  scanner.py                          live scan → verdict, SHAP, coverage, URL-pattern chip
-  netguard.py                         SSRF guards: redirects, rebinding, metadata IPs
-  agent.py                            Groq-backed analyst: Findings / Commentary + tool loop; key is an argument, not env inside `_post`
-  settings.py                         env / .env configuration and secrets
-  cli.py                              train | scan | evaluate | validate
-  data.py                             PhiUSIIL + UCI loaders, grouped splits
-  db.py                               scan telemetry (SQLAlchemy, SQLite or Postgres)
-  features/
-    phiusiil_url.py                   live URL-string extractor
-    phiusiil_content.py               live HTML extractor (no JS)
-    extractor.py                      orchestrates a scan
-    url_features.py / content_…       2012 extractors (research / validate)
-analysis/                             01–05: UCI research; 06: train; 07: live eval
-api/main.py                           FastAPI (scan, chat, scans, stats, findings, UI)
-api/security.py                       scan + chat rate limits, concurrency caps, optional API key
-web/                                  React + Vite + TypeScript (Sphinx UI; Findings / Commentary in analystReply.ts; BYOK key in groqKey.ts)
+src/phishing/                         library: scan, train, extract, analyst
+  scanner.py                          live scan → verdict, SHAP, coverage
+  netguard.py                         SSRF guards
+  agent.py                            Groq analyst (Findings / Commentary)
+  fit.py                              train the PhiUSIIL model
+  features/                           PhiUSIIL extractors (plus 2012 extractors for research)
+api/                                  FastAPI: scan, chat, history, stats, UI
+web/                                  React + Vite UI
 migrations/                           alembic revisions for the scans table
+datasets/                             PhiUSIIL training CSVs (2023)
+analysis/
+  06_train_final.py                   served-model train (Docker build)
+  07_live_sample_eval.py              live re-extraction eval
+docs/findings.md                      how a scan works, live numbers, analyst chat
 tests/                                pytest; network tests marked skippable
-notebooks/                            stages 1–3 narrative (2012)
+research/                             2012 coursework — not used at scan time
+  Choi_Final.ipynb                    original submission (untouched)
+  notebooks/                          stages 1–3 narrative
+  analysis/                           01–05: leakage, calibration, SHAP, decay
+  datasets/Training_Dataset.csv       UCI 2012 table
+artifacts/model.joblib                fitted model (gitignored; run train)
 reports/                              CSV / JSON / figures, including the model card
-artifacts/model.joblib                fitted PhiUSIIL model (gitignored; run train)
-Dockerfile                            trains the model at build, serves via uvicorn on $PORT
-render.yaml                           public demo: Free Docker, SQLite, Groq omitted, tight limits
-docs/findings.md                      scan pipeline, live eval, analyst chat, 2012 → 2023
+Dockerfile                            trains at build, serves uvicorn on $PORT
+render.yaml                           public demo Blueprint
 ```

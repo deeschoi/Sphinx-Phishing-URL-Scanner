@@ -106,7 +106,7 @@ Transport is the OpenAI-compatible Groq endpoint over `requests` — no new depe
 
 ## Why this project exists (2012 → 2023)
 
-The original notebook trained Random Forest on a random 80/20 split of the [UCI Phishing Websites](https://archive.ics.uci.edu/dataset/327/phishing+websites) set (Mohammad, Thabtah & McCluskey, 2012): 11,055 rows, 30 integer features, **97.69% test accuracy**. That number is real and also inflated. 47% of rows are exact duplicate feature patterns; a random split scores memorisation. Under `StratifiedGroupKFold` on those pattern ids, LightGBM is the honest winner at 0.956 accuracy, and the leak is 1–2 points for tree ensembles.
+The original notebook ([`research/Choi_Final.ipynb`](../research/Choi_Final.ipynb)) trained Random Forest on a random 80/20 split of the [UCI Phishing Websites](https://archive.ics.uci.edu/dataset/327/phishing+websites) set (Mohammad, Thabtah & McCluskey, 2012): 11,055 rows, 30 integer features, **97.69% test accuracy**. That number is real and also inflated. 47% of rows are exact duplicate feature patterns; a random split scores memorisation. Under `StratifiedGroupKFold` on those pattern ids, LightGBM is the honest winner at 0.956 accuracy, and the leak is 1–2 points for tree ensembles.
 
 Five of those 30 features cannot be reproduced in 2026 (Alexa, toolbar PageRank, Google Index, inbound-link counts, 2012 blocklists). `SSLfinal_State` was the dominant signal in 2012; Let's Encrypt made it cheap to fake. A model trained under 2012 HTTPS prevalence drops recall from 0.95 to **0.78** if every site is forced to “have SSL”.
 

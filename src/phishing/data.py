@@ -60,7 +60,7 @@ def pattern_group_ids(X: pd.DataFrame) -> np.ndarray:
 
 
 def unique_pattern_stats(df: pd.DataFrame) -> dict[str, int | float]:
-    """Reproduce the EDA numbers reported in Choi_Final.ipynb."""
+    """Reproduce the EDA numbers reported in research/Choi_Final.ipynb."""
     X = df[FEATURE_COLUMNS]
     groups = pattern_group_ids(X)
     n_unique = int(pd.Series(groups).nunique())

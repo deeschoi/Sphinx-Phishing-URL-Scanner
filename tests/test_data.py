@@ -1,4 +1,4 @@
-"""Lock the EDA numbers reported in Choi_Final.ipynb / the write-up."""
+"""Lock the EDA numbers reported in research/Choi_Final.ipynb / the write-up."""
 
 from __future__ import annotations
 
