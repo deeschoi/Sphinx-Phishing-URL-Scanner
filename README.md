@@ -4,97 +4,26 @@ Sphinx is a live phishing scanner you run as a website: FastAPI serves the train
 
 There is no login on localhost. Scanner, History, Stats, and Research findings work without any API key from the same machine; callers from off-loopback addresses need `SPHINX_API_KEY` or an explicit `SPHINX_ALLOW_ANONYMOUS=1`. The analyst chat is optional: paste your own [Groq](https://console.groq.com/keys) key (`gsk_…`) in the panel when you want an explanation. That key lives in the browser’s `sessionStorage`, is sent only on `POST /api/chat` as `X-Groq-Api-Key`, and is not stored on the server.
 
-This repo began as a DATS 2103 coursework project on the 2012 UCI Phishing Websites table. The original notebook and write-up are unchanged under [`research/`](research/README.md). The scanner Sphinx serves today is trained on a different dataset: [PhiUSIIL](https://archive.ics.uci.edu/dataset/967/phiusiil+phishing+url+dataset) (Prasad & Chandra, 2023).
+This repo began as a DATS 2103 coursework project on the 2012 UCI Phishing Websites table. The original notebook and write-up are unchanged under [`research/`](research/README.md). The scanner Sphinx serves today is trained on [PhiUSIIL](https://archive.ics.uci.edu/dataset/967/phiusiil+phishing+url+dataset) (Prasad & Chandra, 2023).
 
-How a scan is extracted and guarded, live vs holdout numbers, and how the analyst chat is grounded: **[docs/findings.md](docs/findings.md)**.
+How a scan is extracted, what the numbers mean, and live vs holdout results: **[docs/](docs/README.md)**.
 
-## What Sphinx does
+## What Sphinx can do
 
-A scan is not a blocklist lookup. Sphinx measures the URL string and, when it can, the HTML of the landing page, then scores those 48 features with XGBoost.
+A scan is not a blocklist lookup. Sphinx measures the URL string and, when it can, the HTML of the landing page, then scores those 48 features with XGBoost. Private and metadata addresses are refused before a socket is opened. The page model is used when HTML was measured; a URL-only fallback is used when it was not. SHAP bars explain whichever number is on screen.
 
-1. **Refuse anything that is not a public `http`/`https` page.** Loopback, RFC1918, link-local, CGNAT, multicast, reserved, IPv4-mapped IPv6, and cloud-metadata addresses are dropped before a socket is opened. `user:password@host` is stripped so credentials never reach the target or history. Auto-redirects are off: each hop is re-validated, and the connection is bound to the address that was actually reached (DNS rebinding cannot sneak a private hop through).
-2. **Fetch without executing JavaScript.** Timeout defaults to 8s (API max 20s). Bodies are capped at 2 MB. Only a 2xx response counts as a page: a 404, parking page, or WAF interstitial falls back to URL-only scoring instead of being scored as the site's markup. Up to 8 redirects are followed by hand.
-3. **Extract the same 48 columns the model was trained on.** 20 from the URL string (length, IP host, HTTPS scheme bit, TLD prior, obfuscation, character ratios) and 28 from HTML (line count, title↔domain match, favicon, forms, password fields, social/copyright markers, image/CSS/JS/self/external refs). Missing HTML is never scored as zeros.
-4. **Score with two persisted estimators, then explain.** The 48-feature page model is used when HTML was measured. A URL-only fallback is used when it was not. SHAP bars explain whichever number is on screen.
-
-Two extra rules sit on top of those estimators:
-
-- **Disagreement.** The page model's heaviest weights (`NoOfExternalRef`, `LineOfCode`, `NoOfSelfRef`) drifted between the 2023 crawl and 2026 markup, so a rich modern homepage can pin at *p* ≈ 1.0. When the page model says phishing and the URL string looks clean, the URL score wins — except on free-hosting suffixes (`github.io`, `vercel.app`, `firebaseapp.com`, …), where kits look clean by construction. When the two scores disagree, or differ by 0.2 or more, the Scanner shows both.
-- **Withheld live ratings.** DNS failure (`unreachable`) and an offline `--tier A` scan (`not_probed`) do not get a live `risk` band. A failed fetch still does: the URL-only model scores the string. Unreachable hosts may show a `URL pattern:` chip only when the origin, or a kit-shaped path (`*.html`, `*.php`, …), actually looks like phishing. A clean origin is left unchipped — that is not a safety clearance.
-
-The served model is XGBoost on 235,795 PhiUSIIL rows (42.8% phishing), evaluated on a **host-grouped holdout**. Held-out accuracy on the frozen 2023 CSV columns is **99.95%**; that is an upper bound. Live re-extraction on a held-out sample reads **90.6% accuracy / 75% recall / 0.9% FPR**. The UI reports both numbers on every scan. The score is not calibrated: read the gauge as a score, not as a frequency.
-
-### Verdicts
-
-| Verdict | Meaning |
-|---|---|
-| **phishing** | Score at or above the block threshold. Treat the link as hostile. |
-| **suspicious** | Score at or above the warn threshold, below block. |
-| **probably safe** | Live page, score below warn but not in the lowest band. |
-| **legitimate** | Live page, lowest band. The model found no phishing signals — not a clearance to type a password. |
-| **unreachable** | The hostname did not resolve. No live-site rating. |
-| **not_probed** | Offline scan (`--tier A`). No live-site rating. Shown in the UI as **not rated**. |
-
-A failed fetch is still one of the four live bands, from the URL-only model, with a note that the page was not measured. The response always names the page that was actually scored: a URL that 302s somewhere else shows the landing page and the hop count.
-
-### What a result contains
-
-- Verdict, probability, and a one-line rationale.
-- Top SHAP contributors (log-odds, not percentages), flagged when a feature was not actually measured.
-- Scan coverage: reachability, DNS, page download, HTTP status, redirects followed, whether the landing page was HTTPS (scheme only — no certificate is parsed), and how many of the 48 features were used.
-- Model reliability: grouped-holdout accuracy / AUROC vs the live-sample figures above.
-- Notes (redirects, truncated HTML, JavaScript shells, URL-only fallback, disagreement).
-- Optional dual scores when the two estimators disagree.
-
-Every scan is logged so History and Stats work. A logging failure never fails a scan.
-
-## The website
-
-The web app brands itself **Sphinx**. Four sections:
+The web app has four sections:
 
 | Section | What it is for |
 |---|---|
-| **Scanner** | Paste a URL (or use the example chips). Returns the payload above. History's **Scan again** lands here with `?url=` and actually runs. Optional analyst chat splits **Findings** (measured evidence) from **Commentary**. |
-| **History** | Recent scans logged by the API, paginated 50 at a time. Credentials, query strings, fragments, and path segments that look like secrets (OTPs, JWTs, hex tokens, a segment after `/reset` / `/token` / …) are stripped before storage. Best-effort: a readable slug that is itself a secret is kept. |
-| **Stats** | Verdict mix and daily mean score over 7 / 30 / 90 days, for spotting drift. Unreachable hosts are excluded from the mean. Counts are filtered to the selected window. |
+| **Scanner** | Paste a URL (or use the example chips). Returns a verdict, probability, SHAP contributors, and scan coverage. History's **Scan again** lands here with `?url=` and actually runs. Optional analyst chat splits **Findings** (measured evidence) from **Commentary**. |
+| **History** | Recent scans logged by the API, paginated 50 at a time. Credentials and token-shaped path segments are stripped before storage. |
+| **Stats** | Verdict mix and daily mean score over 7 / 30 / 90 days, for spotting drift. Unreachable hosts are excluded from the mean. |
 | **Research findings** | Headline tables from the 2012 UCI analysis that started this project (leakage, encoding, decay). Nothing on that page is used to score a URL. |
 
-### Analyst chat
+Chat is an explanation layer over a scan that already happened. Scans never need Groq. If the server has no `GROQ_API_KEY`, the panel asks for a visitor key.
 
-Chat is an explanation layer over a scan that already happened. The verdict and SHAP values are computed by the classifier before a token is generated. Scans never need Groq.
-
-If the server has no `GROQ_API_KEY`, the panel stays visible and asks for a visitor key. A request header wins over the env key. Without either, chat returns 503.
-
-Starter chips: *Why this verdict?*, *What would change your mind?*, *What could this scan have missed?*, *How much should I trust this score?* Answers must use **Findings** then **Commentary**. The UI lists which of six tools an answer actually consulted:
-
-| Tool | Returns |
-|---|---|
-| `get_signals` | Ranked SHAP list, with whether each feature was measured |
-| `get_features` | Raw values for any of the 48 columns |
-| `get_extraction_warnings` | What could not be measured, and what was substituted |
-| `get_model_card` | Dataset, holdout vs live metrics, thresholds, documented leaks |
-| `get_host_history` | Prior verdicts for the same hostname, from scan telemetry |
-| `rescan_url` | A fresh scan, through the same SSRF guard, capped per conversation |
-
-The system prompt is server-side. Client messages are filtered to `user` / `assistant` turns. The `scan` object on `/api/chat` is schema-validated (unknown keys dropped); when a `scan_id` resolves in telemetry, stored `url` / `verdict` / `probability` / `model` override the client. Changing the URL starts a new conversation.
-
-## HTTP API
-
-Guarded routes require `X-API-Key` when `SPHINX_API_KEY` is set. When it is unset, they accept anonymous callers only according to `SPHINX_ALLOW_ANONYMOUS` (default: loopback).
-
-| Method | Path | Auth | What it does |
-|---|---|---|---|
-| `POST` | `/api/scan` | guarded | Fetch, extract, score. Body: `{ "url", "timeout"? }`. |
-| `POST` | `/api/chat` | guarded | Ask about a scan already returned. Optional `X-Groq-Api-Key`. |
-| `GET` | `/api/scans` | guarded | Paginated history (`limit`, `offset`). |
-| `GET` | `/api/stats` | guarded | Verdict mix and daily mean (`days`). |
-| `GET` | `/api/agent` | public | Whether chat needs a visitor Groq key. |
-| `GET` | `/api/model` | public | Feature lists, holdout + live metrics, thresholds. |
-| `GET` | `/api/findings` | public | 2012 research tables for the Findings tab. |
-| `GET` | `/api/health` | public | Liveness only. Never touches the model or DB. |
-| `GET` | `/api/ready` | public | Readiness: model artifact loaded, DB answers, UI built. |
-
-`/` and client-side routes (`/history`, `/stats`, `/findings`) serve the built React app. OpenAPI is at `/docs`.
+There is also a CLI (`phishing scan`) and an HTTP API (`POST /api/scan`, OpenAPI at `/docs`). Route table and payload fields: [docs/parameters.md](docs/parameters.md).
 
 ## Run Sphinx
 
@@ -211,7 +140,7 @@ phishing validate           # 2012 Tier-A drift vs 2026 legitimate URLs
 alembic upgrade head        # apply migrations (the API also creates tables on boot)
 ```
 
-CI also typechecks and builds the UI, lints with Ruff, imports every entry point, and smoke-tests the Docker image (including that private targets return 403). Numbered scripts under `scripts/` train the served model (`06`) and run the live re-extraction eval (`07`; see [docs/findings.md](docs/findings.md)). The 2012 UCI scripts and notebooks live under [`research/`](research/README.md).
+CI also typechecks and builds the UI, lints with Ruff, imports every entry point, and smoke-tests the Docker image (including that private targets return 403). Numbered scripts under `scripts/` train the served model (`06`) and run the live re-extraction eval (`07`; see [docs/](docs/README.md)). The 2012 UCI scripts and notebooks live under [`research/`](research/README.md).
 
 ## Repo map
 
@@ -219,30 +148,14 @@ Docker, Render, Alembic, and Python packaging all look at the repo root, which i
 
 ```text
 src/phishing/                         library: scan, train, extract, analyst
-  scanner.py                          live scan → verdict, SHAP, coverage
-  netguard.py                         SSRF guards
-  agent.py                            Groq analyst (Findings / Commentary)
-  fit.py                              train the PhiUSIIL model
-  db.py                               scan telemetry, redaction
-  features/                           PhiUSIIL extractors (plus 2012 extractors for research)
 api/                                  FastAPI: scan, chat, history, stats, UI
-  security.py                         API key, anonymous-access, rate limits
 web/                                  React + Vite UI
 migrations/                           alembic revisions for the scans table
 datasets/                             PhiUSIIL training CSVs (2023)
-scripts/
-  06_train_final.py                   served-model train (Docker build)
-  07_live_sample_eval.py              live re-extraction eval
-  check_imports.py                    CI import sweep
-docs/findings.md                      how a scan works, live numbers, analyst chat
+scripts/                              served-model train (06) and live eval (07)
+docs/                                 methodology, parameters, findings
 tests/                                pytest; network tests marked skippable
 research/                             2012 coursework — not used at scan time
-  Choi_Final.ipynb                    original submission (untouched)
-  Choi_Final_Write_Up.pdf             original write-up
-  Phishing Websites Features.docx     UCI feature dictionary
-  notebooks/                          stages 1–3 narrative
-  analysis/                           01–05: leakage, calibration, SHAP, decay
-  datasets/Training_Dataset.csv       UCI 2012 table
 artifacts/model.joblib                fitted model (gitignored; run train)
 reports/                              CSV / JSON / figures, including the model card
 Dockerfile                            trains at build, serves uvicorn on $PORT

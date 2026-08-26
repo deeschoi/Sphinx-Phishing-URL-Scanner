@@ -12,4 +12,4 @@ Original DATS 2103 coursework and the leakage / decay / rule-mining follow-ups. 
 | `analysis/` | 01–05: leakage, calibration, SHAP, decay |
 | `datasets/Training_Dataset.csv` | UCI 2012 table |
 
-Sphinx trains on PhiUSIIL. See the [README](../README.md) and [findings](../docs/findings.md).
+Sphinx trains on PhiUSIIL. See the [README](../README.md) and [docs/](../docs/README.md).
