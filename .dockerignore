@@ -19,3 +19,7 @@ htmlcov
 .coverage
 web/node_modules
 web/dist
+.claude
+.cursor
+CLAUDE-SECURITY-*
+build-plan*.md

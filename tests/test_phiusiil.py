@@ -453,7 +453,7 @@ def test_free_hosting_platform_feature_marks_shared_hosts():
     assert platform_suffix("example.com") == ""
 
     # Subdomain depth is NOT rebased onto the platform suffix. Doing so cost
-    # 4.7 points of live recall in analysis/07, because it also lowers every
+    # 4.7 points of live recall in scripts/07_live_sample_eval.py, because it also lowers every
     # kit parked on the same suffix.
     assert extract_phiusiil_url_features("https://abc.vercel.app")["NoOfSubDomain"] == 1
 

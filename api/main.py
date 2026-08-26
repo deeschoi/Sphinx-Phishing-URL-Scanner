@@ -557,7 +557,7 @@ def ready() -> dict:
         checks["model"] = next(iter(models)) if models else None
         if not models:
             ok = False
-            checks["model_error"] = "No trained model artifact. Run: python run.py train"
+            checks["model_error"] = "No trained model artifact. Run: phishing train"
     except Exception as exc:  # noqa: BLE001 — readiness reports, never raises
         ok = False
         checks["model_error"] = f"{type(exc).__name__}: {exc}"

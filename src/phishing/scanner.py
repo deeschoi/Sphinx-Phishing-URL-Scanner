@@ -73,7 +73,7 @@ def _loaded_payload() -> dict[str, Any]:
     path = ARTIFACTS_DIR / "model.joblib"
     if not path.exists():
         raise FileNotFoundError(
-            f"No trained model at {path}. From the repo root run: python run.py train"
+            f"No trained model at {path}. From the repo root run: phishing train"
         )
     return load_payload(path)
 

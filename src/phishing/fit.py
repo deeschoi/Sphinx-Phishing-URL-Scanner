@@ -123,7 +123,7 @@ def train_phiusiil_model(*, model_name: str = MODEL_NAME) -> dict[str, Any]:
             "www as a subdomain, extra special character, or path/slash leak, "
             "and never scores placeholder zeros as a kit. The held-out numbers "
             "here are measured on the frozen 2023 columns and do not transfer "
-            "to live 2026 scans: on a 240-host live sample (analysis/07, seed "
+            "to live 2026 scans: on a 240-host live sample (scripts/07, seed "
             "7) the scanner reads 90.6% accuracy, 75.0% recall, 0.9% FPR, with "
             "59 of 240 hosts no longer resolving. Two known leaks survive in "
             "the table: TLDLegitimateProb is near zero for .app / .io, so real "
@@ -132,7 +132,7 @@ def train_phiusiil_model(*, model_name: str = MODEL_NAME) -> dict[str, Any]:
             "row (kept out of the feature set for that reason)."
         ),
         "live_sample": {
-            "script": "analysis/07_live_sample_eval.py",
+            "script": "scripts/07_live_sample_eval.py",
             "seed": 7,
             "n_per_class": 120,
             "accuracy": 0.906,

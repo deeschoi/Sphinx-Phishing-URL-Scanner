@@ -8,7 +8,7 @@ legitimate pages, misses on phishing kits, and hosts that no longer resolve.
 Tune on one seed, report on another. Network variance means the set of dead
 hosts differs between runs, so reachability counts are part of the result.
 
-    python analysis/07_live_sample_eval.py --seed 42 --n-per-class 80
+    python scripts/07_live_sample_eval.py --seed 42 --n-per-class 80
 """
 
 from __future__ import annotations

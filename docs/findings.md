@@ -38,10 +38,10 @@ Every scan is logged so History and Stats work. A logging failure never fails a 
 
 The model card reports **99.95% accuracy** on the host-grouped holdout. That number is measured on the **frozen 2023 CSV columns**. It is an upper bound, not a deployment estimate.
 
-`analysis/07_live_sample_eval.py` re-extracts every feature over the network, which is what Sphinx actually does:
+`scripts/07_live_sample_eval.py` re-extracts every feature over the network, which is what Sphinx actually does:
 
 ```bash
-PYTHONPATH=src python analysis/07_live_sample_eval.py --seed 7 --n-per-class 120
+PYTHONPATH=src python scripts/07_live_sample_eval.py --seed 7 --n-per-class 120
 ```
 
 Held-out sample, seed 7, 120 unique hosts per class (tuning was done on seed 42):

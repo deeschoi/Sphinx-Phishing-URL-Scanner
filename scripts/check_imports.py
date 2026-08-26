@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Import every module in the repo without running it.
 
-The analysis scripts and the FastAPI app are thin wrappers over ``phishing``.
+The numbered scripts and the FastAPI app are thin wrappers over ``phishing``.
 When a helper there is renamed, unit tests still pass because they exercise the
 package directly, and the breakage only shows up when someone runs a script.
 Executing each module's imports and module-level code (but not ``main``) is
@@ -68,7 +68,7 @@ def main() -> int:
         if error:
             failures.append((name, error))
 
-    for directory in (ROOT / "analysis", ROOT / "research" / "analysis"):
+    for directory in (ROOT / "scripts", ROOT / "research" / "analysis"):
         if not directory.is_dir():
             continue
         for path in sorted(directory.glob("[0-9]*.py")):

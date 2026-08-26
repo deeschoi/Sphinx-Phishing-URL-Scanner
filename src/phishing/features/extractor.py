@@ -46,7 +46,7 @@ def _looks_like_js_shell(values: dict[str, float]) -> bool:
     script/CSS volume" was measured on the seed-42 live sample and cost 5.1
     points of recall for no FPR gain: a phishing kit is *also* a thin page
     behind a few scripts, so the ratio catches the kits along with the
-    CDN-heavy legitimate pages it was meant for. See analysis/07.
+    CDN-heavy legitimate pages it was meant for. See scripts/07_live_sample_eval.py.
     """
     links = float(values.get("NoOfExternalRef", 0)) + float(values.get("NoOfSelfRef", 0))
     scripts = float(values.get("NoOfJS", 0))
@@ -64,7 +64,7 @@ def _impute_js_shell_links(
     Filling all of PHIUSIIL_HTML_FEATURES here was measured on the seed-42
     live sample and cost 10.3 points of recall: HasPasswordField, Bank, Pay
     and the rest are genuinely measured on a kit's login page, and replacing
-    them with legitimate-class medians erases the evidence. See analysis/07.
+    them with legitimate-class medians erases the evidence. See scripts/07_live_sample_eval.py.
     """
     if not fill or not _looks_like_js_shell(values):
         return

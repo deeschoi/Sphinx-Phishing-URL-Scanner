@@ -78,7 +78,7 @@ def is_free_hosting_platform(url: str) -> int:
     A scanner routing hint, never a model feature — see the note on
     ``PHIUSIIL_PLATFORM_SUFFIXES``. Subdomain depth is deliberately *not*
     counted against these suffixes either; both were measured and rejected
-    in analysis/07.
+    in scripts/07_live_sample_eval.py.
     """
     return 1 if platform_suffix(_host(url)) else 0
 

@@ -211,9 +211,11 @@ phishing validate           # 2012 Tier-A drift vs 2026 legitimate URLs
 alembic upgrade head        # apply migrations (the API also creates tables on boot)
 ```
 
-CI also typechecks and builds the UI, lints with Ruff, imports every entry point, and smoke-tests the Docker image (including that private targets return 403). Numbered scripts under `analysis/` train the served model (`06`) and run the live re-extraction eval (`07`; see [docs/findings.md](docs/findings.md)). The 2012 UCI scripts and notebooks live under [`research/`](research/README.md).
+CI also typechecks and builds the UI, lints with Ruff, imports every entry point, and smoke-tests the Docker image (including that private targets return 403). Numbered scripts under `scripts/` train the served model (`06`) and run the live re-extraction eval (`07`; see [docs/findings.md](docs/findings.md)). The 2012 UCI scripts and notebooks live under [`research/`](research/README.md).
 
 ## Repo map
+
+Docker, Render, Alembic, and Python packaging all look at the repo root, which is why those files sit next to the README. Coursework, notebooks, and the 2012 table live under `research/`. Local editor and scan artifacts (`.claude/`, `CLAUDE-SECURITY-*`) are gitignored.
 
 ```text
 src/phishing/                         library: scan, train, extract, analyst
@@ -228,9 +230,10 @@ api/                                  FastAPI: scan, chat, history, stats, UI
 web/                                  React + Vite UI
 migrations/                           alembic revisions for the scans table
 datasets/                             PhiUSIIL training CSVs (2023)
-analysis/
+scripts/
   06_train_final.py                   served-model train (Docker build)
   07_live_sample_eval.py              live re-extraction eval
+  check_imports.py                    CI import sweep
 docs/findings.md                      how a scan works, live numbers, analyst chat
 tests/                                pytest; network tests marked skippable
 research/                             2012 coursework — not used at scan time

@@ -24,11 +24,11 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 COPY pyproject.toml README.md ./
 COPY datasets/ ./datasets/
 COPY src/ ./src/
-COPY analysis/ ./analysis/
+COPY scripts/ ./scripts/
 RUN pip install . --no-deps
 
 # Produces artifacts/model.joblib and reports/06_model_card.json.
-RUN python analysis/06_train_final.py
+RUN python scripts/06_train_final.py
 
 
 FROM node:22-alpine AS frontend
