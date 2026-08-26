@@ -52,7 +52,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 curl \
+    && apt-get install -y --no-install-recommends libgomp1 curl gosu \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 scanner
 
@@ -66,9 +66,17 @@ COPY reports/ ./reports/
 COPY --from=builder /build/artifacts/ ./artifacts/
 COPY --from=builder /build/reports/06_model_card.json ./reports/06_model_card.json
 COPY --from=frontend /web/dist ./web/dist
+COPY docker-entrypoint.sh /docker-entrypoint.sh
 
-RUN chown -R scanner:scanner /app
-USER scanner
+# Stay root in the image metadata so the entrypoint can chown a Compose
+# named volume at /app/data (those mounts are root:root). It then execs
+# uvicorn as scanner. docker run --user 10001 still works: the entrypoint
+# skips chown and execs as the given user.
+RUN mkdir -p /app/data \
+    && chown -R scanner:scanner /app \
+    && chmod 755 /docker-entrypoint.sh
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
 
 # Local/compose default. Render injects PORT at runtime (often 10000).
 ENV PORT=8000

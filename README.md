@@ -13,7 +13,7 @@ The web app brands itself **Sphinx**. Four sections:
 | **Stats** | Verdict mix and daily mean score, for spotting drift. Unreachable hosts are excluded from the mean. |
 | **Research findings** | Headline tables from the 2012 UCI analysis that started this project (leakage, encoding, decay). Nothing on that page is used to score a URL. |
 
-This repo began as a DATS 2103 coursework project on the 2012 UCI Phishing Websites table. The original submission is unchanged: [`research/Choi_Final.ipynb`](research/Choi_Final.ipynb). The scanner Sphinx serves today is trained on a different dataset.
+This repo began as a DATS 2103 coursework project on the 2012 UCI Phishing Websites table. The original notebook and write-up are unchanged under [`research/`](research/README.md). The scanner Sphinx serves today is trained on a different dataset.
 
 How a scan is extracted and guarded, live vs holdout numbers, and how the analyst chat is grounded: **[docs/findings.md](docs/findings.md)**.
 
@@ -145,6 +145,8 @@ docs/findings.md                      how a scan works, live numbers, analyst ch
 tests/                                pytest; network tests marked skippable
 research/                             2012 coursework — not used at scan time
   Choi_Final.ipynb                    original submission (untouched)
+  Choi_Final_Write_Up.pdf             original write-up
+  Phishing Websites Features.docx     UCI feature dictionary
   notebooks/                          stages 1–3 narrative
   analysis/                           01–05: leakage, calibration, SHAP, decay
   datasets/Training_Dataset.csv       UCI 2012 table

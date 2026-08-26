@@ -19,14 +19,16 @@ services:
     restart: unless-stopped
 
   # Opt in with: docker compose --profile postgres up
-  # Credentials come from the environment (or a .env file); there is no default
-  # password, so the profile fails loudly rather than starting with a known one.
+  # Compose interpolates inactive profiles too, so ${VAR:?} would break the
+  # default SQLite path. Leave these unset unless you enable the profile.
+  # The postgres image refuses to start with an empty POSTGRES_PASSWORD, so
+  # there is still no baked-in default password.
   db:
     profiles: [postgres]
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_USER: ${POSTGRES_USER:-}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       POSTGRES_DB: ${POSTGRES_DB:-phishing}
     # Not published: only the api service needs it, over the compose network.
     expose:
