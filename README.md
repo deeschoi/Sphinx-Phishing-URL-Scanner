@@ -25,7 +25,32 @@ Chat is an explanation layer over a scan that already happened. Scans never need
 
 There is also a CLI (`phishing scan`) and an HTTP API (`POST /api/scan`, OpenAPI at `/docs`). Route table and payload fields: [docs/parameters.md](docs/parameters.md).
 
-## Run Sphinx
+## Public demo (Render)
+
+Sphinx is a long-running app, not a static site: GitHub Pages and Read the Docs cannot run `/api/scan`. A README “try it” link needs the Docker image on a host that keeps `uvicorn` up (Render, Fly, Cloud Run, a VPS). The intended public setup is a **Render Docker web service**, **Free** instance, **ephemeral SQLite**, **no `GROQ_API_KEY`**.
+
+Visitors scan anonymously. Chat is bring-your-own-key so Groq bills them, not the operator. Health check **`/api/ready`** (not `/api/health`). First image build trains the model and can take 30–60+ minutes. Free instances sleep after idle; the next click pays a cold start. History and Stats reset when the instance is replaced unless you attach a disk or Postgres later. One instance, no autoscaling: rate limits are process-local.
+
+Dashboard env (never commit secrets):
+
+| Variable | Public demo |
+| --- | --- |
+| `GROQ_API_KEY` | omit |
+| `SPHINX_API_KEY` | omit (a key baked into the UI is not auth) |
+| `SPHINX_ALLOW_ANONYMOUS` | `1` (the demo is intentionally public; rate limits are the control) |
+| `SPHINX_SCAN_RATE_PER_MINUTE` | `8` |
+| `SPHINX_SCAN_MAX_CONCURRENT` | `2` |
+| `SPHINX_CHAT_RATE_PER_MINUTE` | `5` |
+| `SPHINX_CHAT_MAX_CONCURRENT` | `1` |
+| `SPHINX_TRUST_PROXY_HEADERS` | `1` only because Render is the only ingress |
+
+Once the service has an HTTPS URL, put it here:
+
+**Live demo:** _(add the Render URL when the service is up)_
+
+[`render.yaml`](render.yaml) is the Blueprint for that service. Apply it from the Render dashboard (or create a Docker web service from this repo and copy the table above). Get a Groq key at [console.groq.com/keys](https://console.groq.com/keys).
+
+## Run locally
 
 Python 3.11+ (3.12 matches the Docker image).
 
@@ -66,31 +91,6 @@ docker compose --profile postgres up --build  # with Postgres alongside
 
 Compose publishes `127.0.0.1:8000` on the host, but inside the container the peer is the Docker bridge (not loopback), so compose sets `SPHINX_ALLOW_ANONYMOUS=1`. That is declaring an already-restricted bind, not opening the service to the internet. A raw `docker run -p 8000:8000` without that env var will 401 every scan.
 
-### Public demo (Render)
-
-Sphinx is a long-running app, not a static site: GitHub Pages and Read the Docs cannot run `/api/scan`. A README “try it” link needs the Docker image on a host that keeps `uvicorn` up (Render, Fly, Cloud Run, a VPS). The intended public setup is a **Render Docker web service**, **Free** instance, **ephemeral SQLite**, **no `GROQ_API_KEY`**.
-
-Visitors scan anonymously. Chat is bring-your-own-key so Groq bills them, not the operator. Health check **`/api/ready`** (not `/api/health`). First image build trains the model and can take 30–60+ minutes. Free instances sleep after idle; the next click pays a cold start. History and Stats reset when the instance is replaced unless you attach a disk or Postgres later. One instance, no autoscaling: rate limits are process-local.
-
-Dashboard env (never commit secrets):
-
-| Variable | Public demo |
-| --- | --- |
-| `GROQ_API_KEY` | omit |
-| `SPHINX_API_KEY` | omit (a key baked into the UI is not auth) |
-| `SPHINX_ALLOW_ANONYMOUS` | `1` (the demo is intentionally public; rate limits are the control) |
-| `SPHINX_SCAN_RATE_PER_MINUTE` | `8` |
-| `SPHINX_SCAN_MAX_CONCURRENT` | `2` |
-| `SPHINX_CHAT_RATE_PER_MINUTE` | `5` |
-| `SPHINX_CHAT_MAX_CONCURRENT` | `1` |
-| `SPHINX_TRUST_PROXY_HEADERS` | `1` only because Render is the only ingress |
-
-Once the service has an HTTPS URL, put it here:
-
-**Live demo:** _(add the Render URL when the service is up)_
-
-[`render.yaml`](render.yaml) is the Blueprint for that service. Apply it from the Render dashboard (or create a Docker web service from this repo and copy the table above). Get a Groq key at [console.groq.com/keys](https://console.groq.com/keys).
-
 ### CLI
 
 ```bash
@@ -103,29 +103,15 @@ phishing scan --tier A https://example.com   # URL string only, no network fetch
 
 ### Configuration
 
-`.env` at the repo root is loaded at startup and never overrides a real environment variable. Copy from `.env.example`.
+`.env` at the repo root is loaded at startup and never overrides a real environment variable. Copy from [`.env.example`](.env.example) for the full list (paths, rate limits, Groq knobs).
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `PHISHING_ROOT` | repo root | Base for data, artifacts, reports |
-| `PHISHING_PHIUSIIL` | `$PHISHING_ROOT/datasets/PhiUSIIL_Phishing_URL_Dataset.csv` | Served-model training table |
-| `PHISHING_DATA` | `$PHISHING_ROOT/research/datasets/Training_Dataset.csv` | 2012 UCI table (research) |
-| `PHISHING_ARTIFACTS_DIR` | `$PHISHING_ROOT/artifacts` | Served model |
-| `PHISHING_REPORTS_DIR` | `$PHISHING_ROOT/reports` | Analysis output |
-| `PHISHING_DATABASE_URL` | `sqlite:///$PHISHING_ROOT/data/scans.db` | Scan telemetry |
-| `SPHINX_API_KEY` | unset | Optional `X-API-Key` on scan/chat/history/stats. Not Groq; a key baked into the UI is not auth |
-| `SPHINX_ALLOW_ANONYMOUS` | `loopback` | Who may call those routes with no key: `loopback`, `private` (LAN), `1`/`all` (public), `0`/`never` |
-| `SPHINX_SCAN_RATE_PER_MINUTE` | `20` | Per-caller scan budget |
-| `SPHINX_SCAN_MAX_CONCURRENT` | `4` | Extra scans return 503 |
-| `SPHINX_CHAT_RATE_PER_MINUTE` | `30` | Per-caller chat budget |
-| `SPHINX_CHAT_MAX_CONCURRENT` | `1` | Extra chat returns 503 |
-| `SPHINX_READ_RATE_PER_MINUTE` | `60` | Per-caller budget for `/api/scans` and `/api/stats` |
-| `SPHINX_TRUST_PROXY_HEADERS` | `0` | Honour `X-Forwarded-For` only behind a proxy you control; the right-most trusted hop is used |
-| `SPHINX_TRUSTED_PROXY_HOPS` | `1` | How many right-most XFF hops belong to proxies you control (clamped 1–8) |
+| `SPHINX_API_KEY` | unset | Optional `X-API-Key` on scan/chat/history/stats. A key baked into the UI is not auth |
+| `SPHINX_ALLOW_ANONYMOUS` | `loopback` | Who may call those routes with no key: `loopback`, `private`, `1`/`all`, `0`/`never` |
 | `GROQ_API_KEY` | unset | Optional operator fallback. Omit on a public host; visitors can still send `X-Groq-Api-Key` |
-| `GROQ_MODEL` | `openai/gpt-oss-120b` | Any Groq tool-calling model |
-| `GROQ_TIMEOUT` | `45` | Seconds for one Groq round-trip |
-| `GROQ_MAX_TOOL_STEPS` | `5` | Tool-loop cap per chat turn |
+| `PHISHING_DATABASE_URL` | SQLite under `data/` | Scan telemetry. Point at Postgres for compose `--profile postgres` |
+| `SPHINX_TRUST_PROXY_HEADERS` | `0` | Honour `X-Forwarded-For` only behind a proxy you control |
 
 `POST /api/scan` fetches a caller-chosen URL. Keep the rate limits, bind behind a reverse proxy (compose already binds `127.0.0.1:8000`), leave `SPHINX_ALLOW_ANONYMOUS` at its `loopback` default unless the service is intentionally public, and omit `GROQ_API_KEY` on public hosts.
 
