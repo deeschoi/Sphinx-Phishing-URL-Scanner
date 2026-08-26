@@ -4,7 +4,7 @@ Sphinx is a live phishing scanner you run as a website: FastAPI serves the train
 
 There is no login. Scanner, History, Stats, and Research findings work without any API key. The analyst chat is optional: paste your own [Groq](https://console.groq.com/keys) key (`gsk_…`) in the panel when you want an explanation. That key lives in the browser’s `sessionStorage`, is sent only on `POST /api/chat` as `X-Groq-Api-Key`, and is not stored on the server.
 
-The web app brands itself **Sphinx — URL Phishing Guardian**. Four sections:
+The web app brands itself **Sphinx**. Four sections:
 
 | Section | What it is for |
 |---|---|

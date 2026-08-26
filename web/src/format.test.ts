@@ -31,7 +31,7 @@ describe("verdict", () => {
     expect(verdictLabel("unreachable")).toBe("unreachable");
     expect(badgeClass("phishing")).toBe("is-phishing");
     expect(badgeClass("mystery")).toBe("is-unknown");
-    expect(gaugeColour("suspicious")).toBe("#f5a524");
+    expect(gaugeColour("suspicious")).toBe("var(--warn)");
   });
 });
 

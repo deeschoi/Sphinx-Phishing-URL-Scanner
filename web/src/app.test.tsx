@@ -158,6 +158,6 @@ describe("Layout", () => {
       </MemoryRouter>,
     );
     expect(screen.getByRole("heading", { name: "Sphinx" })).toBeInTheDocument();
-    expect(screen.getByText("URL Phishing Guardian")).toBeInTheDocument();
+    expect(screen.getByText("phishing scanner")).toBeInTheDocument();
   });
 });

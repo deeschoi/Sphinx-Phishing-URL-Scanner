@@ -12,29 +12,33 @@ function SphinxMark() {
   return (
     <svg
       className="brand-mark"
-      viewBox="0 0 40 40"
-      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 48 48"
       aria-hidden="true"
+      focusable="false"
     >
-      <defs>
-        <linearGradient
-          id="brand-gold"
-          x1="4"
-          y1="2"
-          x2="36"
-          y2="38"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop stopColor="#f0d078" />
-          <stop offset="1" stopColor="#c17a28" />
-        </linearGradient>
-      </defs>
-      <rect width="40" height="40" rx="11" fill="url(#brand-gold)" />
+      <rect width="48" height="48" rx="4" fill="currentColor" />
+      <circle cx="24" cy="11.4" r="2.15" fill="var(--bg)" />
       <path
-        fill="#160e06"
-        d="M11 9.2h10.2c1.3 0 2.1.9 2.1 2.1v4.1l8.6 2.5c2.1.6 3.3 2.5 3.1 4.6 2.5-1.4 3.1-6 .2-7.2-.2 2 .3 4.4-.8 5.6v5.6H8.6v-2.2H6.2v2.2H4.8v-3.3l3.4-1.5v-5.4L5.1 13.8c-.7-.4-.6-1.5.2-1.8L11 10.8V9.2z"
+        d="M10.8 29.2c-2.6.3-3.8 3.2-2.2 5.1"
+        fill="none"
+        stroke="var(--bg)"
+        strokeWidth="1.65"
+        strokeLinecap="round"
       />
-      <circle cx="13.6" cy="13.1" r="0.95" fill="#f0d078" />
+      <ellipse cx="16.6" cy="31.2" rx="6" ry="5" fill="var(--bg)" />
+      <rect x="16.2" y="27.4" width="15.2" height="8.4" rx="2.2" fill="var(--bg)" />
+      <rect x="30.2" y="24.2" width="5.4" height="11.6" rx="1.8" fill="var(--bg)" />
+      <rect x="31.6" y="33.6" width="8.2" height="2.5" rx="1.2" fill="var(--bg)" />
+      <path fill="var(--bg)" d="M30.4 16.4h8.8l1.7 8H28.8l1.6-8z" />
+      <rect
+        x="12.4"
+        y="36.2"
+        width="24"
+        height="1.2"
+        rx="0.4"
+        fill="var(--bg)"
+        opacity="0.7"
+      />
     </svg>
   );
 }
@@ -44,17 +48,17 @@ export function Layout({ children }: { children: ReactNode }) {
     <>
       <header className="masthead">
         <div className="wrap">
-          <div className="brand">
-            <SphinxMark />
-            <div>
-              <h1>Sphinx</h1>
-              <p className="brand-kicker">URL Phishing Guardian</p>
-              <p>
-                Sphinx is a live phishing scanner. Paste a URL and it fetches the
-                page, scores the risk with a trained classifier, and shows which
-                signals decided the verdict.
-              </p>
+          <div className="masthead-inner">
+            <div className="brand">
+              <SphinxMark />
+              <div>
+                <h1>Sphinx</h1>
+                <p className="brand-kicker">phishing scanner</p>
+              </div>
             </div>
+            <p className="brand-aside">
+              Live page fetch. Trained classifier. Explained verdict. No login.
+            </p>
           </div>
           {/* Plain navigation, not a tablist. role="tablist" without
               aria-selected/aria-controls told a screen reader these were tabs
@@ -76,21 +80,23 @@ export function Layout({ children }: { children: ReactNode }) {
       <main className="wrap">
         <section className="view">{children}</section>
       </main>
-      <footer className="wrap footer">
-        <p>
-          The scanner is trained on the PhiUSIIL Phishing URL dataset (Prasad
-          &amp; Chandra, 2023): 48 features from the URL string and the fetched
-          HTML, evaluated on a hold-out split grouped by hostname so no host
-          appears in both training and test. Held-out accuracy is measured on
-          that dataset's frozen columns; the live figures on each scan are the
-          same model re-extracting features over the network, and they are the
-          ones that describe a real scan.
-        </p>
-        <p>
-          The <strong>Research findings</strong> tab is separate coursework on
-          the older UCI Phishing Websites dataset (Mohammad, Thabtah &amp;
-          McCluskey, 2012). Nothing there is used to score a URL.
-        </p>
+      <footer className="footer">
+        <div className="wrap footer-grid">
+          <p>
+            The scanner is trained on the PhiUSIIL Phishing URL dataset (Prasad
+            &amp; Chandra, 2023): 48 features from the URL string and the fetched
+            HTML, evaluated on a hold-out split grouped by hostname so no host
+            appears in both training and test. Held-out accuracy is measured on
+            that dataset's frozen columns; the live figures on each scan are the
+            same model re-extracting features over the network, and they are the
+            ones that describe a real scan.
+          </p>
+          <p>
+            The <strong>Research findings</strong> tab is separate coursework on
+            the older UCI Phishing Websites dataset (Mohammad, Thabtah &amp;
+            McCluskey, 2012). Nothing there is used to score a URL.
+          </p>
+        </div>
       </footer>
     </>
   );

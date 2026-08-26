@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { scanUrl } from "../api";
 import { Analyst } from "../components/Analyst";
@@ -70,48 +70,73 @@ export function Scanner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
 
+  // Keep the compact scan bar and verdict at the top. Layout effect so this
+  // wins over scroll anchoring / live-region focus before the first paint of
+  // the result.
+  useLayoutEffect(() => {
+    if (!result) return;
+    window.scrollTo(0, 0);
+  }, [result]);
+
   function onSubmit(event: FormEvent) {
     event.preventDefault();
     void runScan(url);
   }
 
   return (
-    <>
-      <form className="scanbar" autoComplete="off" onSubmit={onSubmit}>
-        <input
-          className="url-input"
-          value={url}
-          onChange={(event) => setUrl(event.target.value)}
-          placeholder="Paste a URL for Sphinx to judge"
-          aria-label="URL to scan"
-          spellCheck={false}
-        />
-        <button className="scan-button" type="submit" disabled={busy}>
-          {busy ? "Scanning…" : "Scan"}
-        </button>
-      </form>
-      <p className="examples">
-        Try:
-        {EXAMPLES.map((example) => (
-          <button
-            key={example.url}
-            type="button"
-            className="chip"
-            disabled={busy}
-            onClick={() => {
-              setUrl(example.url);
-              void runScan(example.url);
-            }}
-          >
-            {example.label}
-          </button>
-        ))}
-      </p>
-      <div aria-live="polite" aria-atomic="true">
-        {status ? <StatusMessage message={status} error={error} /> : null}
+    <div className={result ? "scanner-active" : "scanner-idle"}>
+      <div className="scan-stage">
+        <section className="scan-hero" aria-label="Scan a URL">
+          {result ? (
+            <p className="hero-kicker">Scan another URL</p>
+          ) : (
+            <>
+              <p className="hero-kicker">Live phishing scanner</p>
+              <h2 className="hero-title">Paste a URL. Sphinx will score it.</h2>
+              <p className="hero-lede">
+                Sphinx fetches the page (JavaScript is never executed), extracts
+                signals from the URL and the HTML, and returns a verdict with the
+                features that moved the score.
+              </p>
+            </>
+          )}
+          <form className="scanbar" autoComplete="off" onSubmit={onSubmit}>
+            <input
+              className="url-input"
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              placeholder="Paste a URL for Sphinx to judge"
+              aria-label="URL to scan"
+              spellCheck={false}
+            />
+            <button className="scan-button" type="submit" disabled={busy}>
+              {busy ? "Scanning…" : "Scan"}
+            </button>
+          </form>
+          <p className="examples">
+            Try:
+            {EXAMPLES.map((example) => (
+              <button
+                key={example.url}
+                type="button"
+                className="chip"
+                disabled={busy}
+                onClick={() => {
+                  setUrl(example.url);
+                  void runScan(example.url);
+                }}
+              >
+                {example.label}
+              </button>
+            ))}
+          </p>
+        </section>
+        <div aria-live="polite" aria-atomic="true">
+          {status ? <StatusMessage message={status} error={error} /> : null}
+        </div>
       </div>
-      {result ? <ScanResultView result={result} /> : null}
-    </>
+      {result ? <ScanResultView result={result} /> : <ScannerPrimer />}
+    </div>
   );
 }
 
@@ -322,5 +347,63 @@ function SignalList({ signals }: { signals: Signal[] }) {
         );
       })}
     </ul>
+  );
+}
+
+function ScannerPrimer() {
+  return (
+    <div className="primer">
+      <div className="primer-split">
+        <section className="primer-card">
+          <h3>What Sphinx looks at</h3>
+          <p className="section-sub">
+            Private and local addresses are refused before any request is made.
+          </p>
+          <ul className="primer-list">
+            <li>Host and path shape, including IP-looking hosts and odd tokens</li>
+            <li>Whether the page arrived over HTTPS, and how many redirects ran</li>
+            <li>Page composition: external links, forms, and HTML structure</li>
+            <li>Reachability: a host that does not resolve is not rated live</li>
+          </ul>
+        </section>
+        <section className="primer-card">
+          <h3>What you get back</h3>
+          <p className="section-sub">
+            Optional analyst chat can walk through the same evidence if you paste
+            a Groq key.
+          </p>
+          <ul className="primer-list">
+            <li>A verdict and a phishing probability for the landing page</li>
+            <li>Per-signal SHAP bars so you can see what moved the score</li>
+            <li>Coverage: DNS, fetch, status, HTTPS, and features used</li>
+            <li>Both estimators when the page model and the URL-string model disagree</li>
+          </ul>
+        </section>
+      </div>
+
+      <h3 className="section-title">Verdicts Sphinx can return</h3>
+      <p className="section-sub">
+        Live-site ratings need a page that actually loaded. An unreachable host
+        is reported as such, not guessed safe.
+      </p>
+      <div className="primer-verdicts">
+        <article className="primer-verdict">
+          <span className="badge is-phishing">phishing</span>
+          <p>High confidence the page is malicious. Treat the link as hostile.</p>
+        </article>
+        <article className="primer-verdict">
+          <span className="badge is-suspicious">suspicious</span>
+          <p>Elevated risk. The score cleared the warn threshold but not a block.</p>
+        </article>
+        <article className="primer-verdict">
+          <span className="badge is-safe">probably safe</span>
+          <p>Low score on a live page. Still not a guarantee the site is honest.</p>
+        </article>
+        <article className="primer-verdict">
+          <span className="badge is-unknown">unreachable</span>
+          <p>The host did not resolve. Sphinx withholds a live-site rating.</p>
+        </article>
+      </div>
+    </div>
   );
 }

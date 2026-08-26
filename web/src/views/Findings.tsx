@@ -30,6 +30,14 @@ export function FindingsView() {
 
   return (
     <div className="findings">
+      <header>
+        <p className="hero-kicker">2012 UCI analysis</p>
+        <h2 className="page-title">Research findings</h2>
+        <p className="section-sub">
+          Headline tables from the coursework that started this project. Nothing on
+          this page is used to score a URL.
+        </p>
+      </header>
       <LeakageCard data={data} />
       <EncodingCard data={data} />
       <ObsolescenceCard data={data} />

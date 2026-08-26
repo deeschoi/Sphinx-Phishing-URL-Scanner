@@ -118,6 +118,35 @@ afterEach(() => {
 });
 
 describe("Scanner", () => {
+  it("fills the idle scanner with primer cards", () => {
+    renderScanner();
+    expect(
+      screen.getByRole("heading", { name: "Paste a URL. Sphinx will score it." }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("What Sphinx looks at")).toBeInTheDocument();
+    expect(screen.getByText("What you get back")).toBeInTheDocument();
+    expect(screen.getByText("Verdicts Sphinx can return")).toBeInTheDocument();
+  });
+
+  it("hides the idle primer after a scan returns", async () => {
+    stubFetch((url) =>
+      url.includes("/api/agent")
+        ? jsonResponse(AGENT_OFF)
+        : jsonResponse(scanResult()),
+    );
+    const user = userEvent.setup();
+    renderScanner();
+
+    await user.type(screen.getByLabelText("URL to scan"), "https://example.com");
+    await user.click(screen.getByRole("button", { name: "Scan" }));
+
+    expect(await screen.findByText("legitimate")).toBeInTheDocument();
+    expect(screen.queryByText("What Sphinx looks at")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Paste a URL. Sphinx will score it." }),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders a verdict, its rationale, and the live-sample metrics", async () => {
     stubFetch((url) =>
       url.includes("/api/agent")

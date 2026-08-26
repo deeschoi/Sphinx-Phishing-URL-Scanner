@@ -21,12 +21,12 @@ export const BADGE_CLASS: Record<string, string> = {
 };
 
 export const GAUGE_COLOUR: Record<string, string> = {
-  phishing: "#ff5f56",
-  suspicious: "#f5a524",
-  "probably safe": "#8fbf6a",
-  legitimate: "#35c98b",
-  unreachable: "#a89478",
-  not_probed: "#a89478",
+  phishing: "var(--danger)",
+  suspicious: "var(--warn)",
+  "probably safe": "var(--safe)",
+  legitimate: "var(--safe)",
+  unreachable: "var(--muted)",
+  not_probed: "var(--muted)",
 };
 
 export const VERDICT_ORDER = [
@@ -56,7 +56,7 @@ export function badgeClass(verdict: string): string {
 }
 
 export function gaugeColour(verdict: string): string {
-  return GAUGE_COLOUR[verdict] ?? "#a89478";
+  return GAUGE_COLOUR[verdict] ?? "var(--muted)";
 }
 
 const URL_PATTERN_CLASS: Record<string, string> = {
