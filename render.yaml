@@ -17,5 +17,13 @@ services:
         value: "5"
       - key: SPHINX_CHAT_MAX_CONCURRENT
         value: "1"
+      # Honour the hop Render appended. SPHINX_TRUSTED_PROXY_HOPS defaults to 1,
+      # which is correct here: Render is the only ingress, so the right-most
+      # X-Forwarded-For entry is the client.
       - key: SPHINX_TRUST_PROXY_HEADERS
+        value: "1"
+      # The demo is intentionally anonymous; rate limits are the control.
+      # Without this the live demo 401s on the first request after deploy,
+      # because Render's TCP peer is not loopback.
+      - key: SPHINX_ALLOW_ANONYMOUS
         value: "1"

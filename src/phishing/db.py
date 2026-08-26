@@ -11,8 +11,10 @@ SQLite by default so the app runs with no extra services; point
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import re
+from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -53,8 +55,11 @@ class Scan(Base):
 
     Query strings are dropped before storage: they routinely carry session
     tokens, password-reset links, and other credentials, and the model never
-    reads them anyway. ``url_hash`` covers the full URL so repeat scans of the
-    same link can still be counted without retaining the sensitive part.
+    reads them anyway. Path segments that look like secrets are redacted
+    best-effort — a readable slug that is itself a secret is kept, and the
+    keyword list is not exhaustive. ``url_hash`` covers the full URL so
+    repeat scans of the same link can still be counted without retaining
+    the sensitive part.
     """
 
     __tablename__ = "scans"
@@ -154,7 +159,88 @@ def session_scope() -> Iterator[Session]:
         session.close()
 
 
-_HIGH_ENTROPY = re.compile(r"^(?=.*\d)(?=.*[A-Za-z])[A-Za-z0-9_-]{16,}$|^[A-Fa-f0-9]{24,}$")
+_SECRET_SEGMENTS = frozenset(
+    {
+        "reset",
+        "verify",
+        "confirm",
+        "activate",
+        "invite",
+        "token",
+        "magic",
+        "auth",
+        "session",
+        "sso",
+        "oauth",
+        "unsubscribe",
+        "password",
+        "recover",
+        "otp",
+        "code",
+        "key",
+        "secret",
+        "signin",
+        "signout",
+        "signup",
+        "callback",
+        "jwt",
+        "nonce",
+        "csrf",
+        "saml",
+        "magiclink",
+        "redeem",
+        "unlock",
+    }
+)
+_OTP = re.compile(r"^\d{6,}$")
+_JWT = re.compile(r"^eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}(\.[A-Za-z0-9_-]*)?$")
+_HEX_TOKEN = re.compile(r"^[A-Fa-f0-9]{24,}$")
+_TOKEN_CHARS = re.compile(r"^[A-Za-z0-9_-]+$")
+_FILENAME_EXT = re.compile(r"^(.+)\.([A-Za-z0-9]{1,5})$")
+
+
+def _looks_random(segment: str) -> bool:
+    """Context-free token test: mixed, long enough, and high-entropy.
+
+    Hyphenated slugs like ``black-friday-2024`` fail this on purpose so the
+    length floor can sit at 12 without eating readable paths. Mixed-case
+    tokens (an uppercase run plus a digit) skip the entropy gate.
+    """
+    if len(segment) < 12 or not _TOKEN_CHARS.fullmatch(segment):
+        return False
+    has_lower = any(char.islower() for char in segment)
+    has_upper = any(char.isupper() for char in segment)
+    has_digit = any(char.isdigit() for char in segment)
+    if not has_digit or (has_lower + has_upper + has_digit) < 2:
+        return False
+    if re.search(r"[A-Z]{2,}", segment):
+        return True
+    if "-" in segment:
+        return False
+    n = len(segment)
+    counts = Counter(segment)
+    entropy = -sum((count / n) * math.log2(count / n) for count in counts.values())
+    return entropy / math.log2(64) > 0.55
+
+
+def _part_is_token(part: str) -> bool:
+    """Whether one dot-separated piece independently looks like a secret."""
+    return bool(part) and (
+        bool(_HEX_TOKEN.match(part)) or bool(_OTP.match(part)) or _looks_random(part)
+    )
+
+
+def _segment_is_token(segment: str) -> bool:
+    if not segment:
+        return False
+    if _JWT.match(segment) or _HEX_TOKEN.match(segment) or _OTP.match(segment):
+        return True
+    if "." in segment:
+        if any(_part_is_token(part) for part in segment.split(".")):
+            return True
+        match = _FILENAME_EXT.match(segment)
+        return bool(match) and _segment_is_token(match.group(1))
+    return _looks_random(segment)
 
 
 def _redact_path(path: str) -> str:
@@ -162,15 +248,33 @@ def _redact_path(path: str) -> str:
 
     Dropping the query string is necessary but not sufficient: password resets
     and magic links routinely put the secret in the path
-    (``/reset/9f3c1a...``), and scan history is not the place for it. Only
-    segments that look like opaque tokens are touched, so ``/en-us/pricing``
-    survives intact and history stays readable.
+    (``/reset/9f3c1a...``), and scan history is not the place for it.
+
+    Rules, in order: a segment after a well-known secret keyword is redacted
+    regardless of shape; 6+ digit OTP-shaped segments; JWTs and dotted
+    segments whose parts fail the entropy test; filename stems with a short
+    extension; then a context-free mixed-alnum / long-hex test.
+
+    Two limits are kept on purpose. A readable slug that *is* a secret is not
+    caught, and the keyword list is not exhaustive. Only opaque-token-shaped
+    segments are touched, so ``/en-us/pricing`` survives intact.
     """
     if not path:
         return path
-    parts = []
+    parts: list[str] = []
+    previous = ""
     for segment in path.split("/"):
-        parts.append("[redacted]" if _HIGH_ENTROPY.match(segment) else segment)
+        redact = False
+        if segment:
+            if (
+                previous.lower() in _SECRET_SEGMENTS
+                and segment.lower() not in _SECRET_SEGMENTS
+            ):
+                redact = True
+            elif _segment_is_token(segment):
+                redact = True
+        parts.append("[redacted]" if redact else segment)
+        previous = segment
     return "/".join(parts)
 
 
@@ -237,6 +341,17 @@ def scans_for_host(host: str, limit: int = 10) -> list[dict[str, Any]]:
             .limit(max(1, min(limit, 50)))
         ).all()
         return [row.to_dict() for row in rows]
+
+
+def scan_by_id(scan_id: int) -> dict[str, Any] | None:
+    """One stored scan by primary key, or ``None`` if it is missing.
+
+    Used to cross-check a client-supplied chat payload against telemetry.
+    No new column: the existing row is already there.
+    """
+    with session_scope() as session:
+        row = session.get(Scan, int(scan_id))
+        return row.to_dict() if row else None
 
 
 def scan_stats(days: int = 30) -> dict[str, Any]:

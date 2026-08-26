@@ -93,7 +93,7 @@ Grounding is enforced by the tool surface rather than by asking nicely. `src/phi
 
 The UI lists which of these an answer actually consulted, so a claim can be traced to evidence rather than taken on faith.
 
-The system prompt is server-side and non-negotiable. Client messages are filtered to `user` and `assistant` turns before they are sent upstream, so a caller cannot smuggle in a system message or a fabricated tool result. The briefing the analyst sees also refuses to treat a missing `url_pattern_risk` as a clearance. Four things the prompt insists on:
+The system prompt is server-side and non-negotiable. Client messages are filtered to `user` and `assistant` turns before they are sent upstream, so a caller cannot smuggle in a system message or a fabricated tool result. The `scan` object on `/api/chat` is schema-validated (unknown keys dropped, out-of-range values coerced) and interpolated through quoting; when a `scan_id` resolves in telemetry, stored `url` / `verdict` / `probability` / `model` override the client. The briefing the analyst sees also refuses to treat a missing `url_pattern_risk` as a clearance. Four things the prompt insists on:
 
 1. **Never clear a site.** A `legitimate` verdict means the model found no phishing signals — not that it is safe to type a password into. On the live sample this model misses about a quarter of the phishing pages it can reach.
 2. **Say which accuracy number applies.** ~99.9% is the frozen-column holdout; ~90.6% accuracy / 75% recall is live re-extraction, which is what a real scan gets.

@@ -11,6 +11,10 @@ services:
       PHISHING_ROOT: /app
       PHISHING_DATABASE_URL: ${PHISHING_DATABASE_URL:-sqlite:////app/data/scans.db}
       SPHINX_API_KEY: ${SPHINX_API_KEY:-}
+      # Publish is 127.0.0.1:8000, but inside the container the peer is the
+      # Docker bridge gateway (e.g. 172.17.0.1), which is not loopback. This
+      # declares that already-restricted publish to an app that cannot see it.
+      SPHINX_ALLOW_ANONYMOUS: ${SPHINX_ALLOW_ANONYMOUS:-1}
       SPHINX_SCAN_RATE_PER_MINUTE: ${SPHINX_SCAN_RATE_PER_MINUTE:-20}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}

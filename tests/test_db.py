@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 
 import pytest
+
+from tests.conftest import make_client
 
 
 @pytest.fixture
@@ -95,8 +98,6 @@ def test_record_scan_never_raises(db, monkeypatch):
 
 
 def test_scans_and_stats_endpoints(db, monkeypatch):
-    from fastapi.testclient import TestClient
-
     import api.main as api_main
 
     importlib.reload(api_main)
@@ -106,7 +107,7 @@ def test_scans_and_stats_endpoints(db, monkeypatch):
 
     db.record_scan(sample_result())
 
-    with TestClient(api_main.app) as client:
+    with make_client(api_main.app) as client:
         listed = client.get("/api/scans")
         assert listed.status_code == 200
         assert len(listed.json()["scans"]) == 1
@@ -116,3 +117,73 @@ def test_scans_and_stats_endpoints(db, monkeypatch):
         assert stats.json()["total_scans"] == 1
 
         assert client.get("/api/health").json() == {"status": "ok"}
+
+
+def test_numeric_otp_in_the_path_is_redacted(db):
+    db.record_scan(sample_result("https://example.com/verify/482913"))
+    stored = db.recent_scans()[0]["url"]
+    assert "482913" not in stored
+    assert stored == "https://example.com/verify/[redacted]"
+
+
+def test_word_shaped_token_after_a_keyword_is_redacted(db):
+    db.record_scan(sample_result("https://example.com/reset/magiclinktoken"))
+    stored = db.recent_scans()[0]["url"]
+    assert "magiclinktoken" not in stored
+    assert stored == "https://example.com/reset/[redacted]"
+
+
+def test_jwt_in_the_path_is_redacted(db):
+    jwt = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+        "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ."
+        "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    )
+    db.record_scan(sample_result(f"https://example.com/session/{jwt}"))
+    stored = db.recent_scans()[0]["url"]
+    assert jwt not in stored
+    assert stored == "https://example.com/session/[redacted]"
+
+
+def test_hash_named_file_is_redacted_named_file_is_not(db):
+    digest = "a" * 32
+    db.record_scan(sample_result(f"https://example.com/files/{digest}.pdf"))
+    assert db.recent_scans()[0]["url"] == "https://example.com/files/[redacted]"
+    db.record_scan(sample_result("https://example.com/files/annual-report.pdf"))
+    urls = {row["url"] for row in db.recent_scans()}
+    assert "https://example.com/files/annual-report.pdf" in urls
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/en-us/pricing",
+        "/2024/03/hello-world",
+        "/docs/getting-started",
+        "/blog/black-friday-2024",
+        "/assets/app.min.js",
+        "/v1/users",
+        "/page/2",
+    ],
+)
+def test_readable_paths_round_trip_byte_identically(db, path):
+    url = f"https://example.com{path}"
+    db.record_scan(sample_result(url))
+    assert db.recent_scans()[0]["url"] == url
+
+
+def test_url_hash_covers_the_unredacted_url(db):
+    url = "https://example.com/reset/482913?x=1"
+    db.record_scan(sample_result(url))
+    with db.session_scope() as session:
+        row = session.query(db.Scan).one()
+    assert row.url_hash == hashlib.sha256(url.encode("utf-8")).hexdigest()
+    assert "482913" not in row.url
+
+
+def test_scan_by_id_returns_the_row_or_none(db):
+    scan_id = db.record_scan(sample_result())
+    row = db.scan_by_id(scan_id)
+    assert row is not None
+    assert row["id"] == scan_id
+    assert db.scan_by_id(scan_id + 999) is None

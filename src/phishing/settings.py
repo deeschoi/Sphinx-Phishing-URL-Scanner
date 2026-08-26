@@ -65,6 +65,7 @@ SCAN_MAX_CONCURRENT = env_int("SPHINX_SCAN_MAX_CONCURRENT", 4)
 # Local defaults are generous; a hosted demo should set 5 / 1.
 CHAT_RATE_PER_MINUTE = env_int("SPHINX_CHAT_RATE_PER_MINUTE", 30)
 CHAT_MAX_CONCURRENT = env_int("SPHINX_CHAT_MAX_CONCURRENT", 1)
+READ_RATE_PER_MINUTE = env_int("SPHINX_READ_RATE_PER_MINUTE", 60)
 
 
 def api_key() -> str:
@@ -75,6 +76,16 @@ def api_key() -> str:
     who can reach the port can force outbound fetches and read scan history.
     """
     return env("SPHINX_API_KEY", "").strip()
+
+
+def allow_anonymous() -> str:
+    """Who may call guarded routes when ``SPHINX_API_KEY`` is unset.
+
+    ``loopback`` (default) keeps the localhost demo open. ``private`` also
+    allows RFC1918 / ULA / link-local. ``1`` / ``true`` / ``all`` is the
+    explicit public-demo opt-in. ``0`` / ``never`` refuses everyone.
+    """
+    return env("SPHINX_ALLOW_ANONYMOUS", "loopback").strip().lower()
 
 
 # --- Groq-backed analyst chat ------------------------------------------------
