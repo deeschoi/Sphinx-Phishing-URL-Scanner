@@ -68,6 +68,14 @@ export function Analyst({ result }: { result: ScanResult }) {
   }, [result.url, result.probability]);
 
   useEffect(() => {
+    // Mounting an empty log still moves the page if we scrollIntoView here —
+    // the sentinel sits below the fold after a scan. Only follow new turns.
+    if (turns.length === 0 && !busy) return;
+    const log = endRef.current?.closest(".analyst-log");
+    if (log) {
+      log.scrollTop = log.scrollHeight;
+      return;
+    }
     endRef.current?.scrollIntoView({ block: "nearest" });
   }, [turns, busy]);
 

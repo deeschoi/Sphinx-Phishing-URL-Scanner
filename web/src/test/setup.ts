@@ -12,3 +12,4 @@ vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = function scrollIntoView() {};
 }
+window.scrollTo = function scrollTo() {};

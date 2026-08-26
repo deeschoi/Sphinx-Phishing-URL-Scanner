@@ -38,6 +38,8 @@ export function History() {
 
   return (
     <>
+      <p className="hero-kicker">Logged scans</p>
+      <h2 className="page-title">Scan history</h2>
       <div className="toolbar">
         <p>
           Recent scans stored by the API. Query strings are stripped before they are

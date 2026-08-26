@@ -53,6 +53,8 @@ export function Stats() {
 
   return (
     <>
+      <p className="hero-kicker">Telemetry</p>
+      <h2 className="page-title">Stats</h2>
       <div className="toolbar">
         <p>
           Verdict mix and daily mean score. Mean probability only includes live-site
@@ -166,8 +168,11 @@ export function Stats() {
                       contentStyle={{
                         background: "var(--surface-raised)",
                         border: "1px solid var(--line)",
-                        borderRadius: 0,
+                        borderRadius: 4,
+                        color: "var(--text)",
                       }}
+                      labelStyle={{ color: "var(--muted)" }}
+                      itemStyle={{ color: "var(--text)" }}
                       formatter={(value, name) => {
                         if (name === "meanPct") {
                           return [formatProbability(Number(value) / 100), "Mean probability"];
