@@ -82,7 +82,7 @@ Free-hosting suffixes and kit-shaped paths are routing hints, not features. See 
 
 ## HTTP API
 
-Guarded routes require `X-API-Key` when `SPHINX_API_KEY` is set. When it is unset, they accept anonymous callers only according to `SPHINX_ALLOW_ANONYMOUS` (default: loopback).
+Guarded routes require `X-API-Key` when `SPHINX_API_KEY` is set. When it is unset, they accept anonymous callers only according to `SPHINX_ALLOW_ANONYMOUS` (default: loopback locally, `1` on Render when unset).
 
 | Method | Path | Auth | Body / query |
 |---|---|---|---|

@@ -23,7 +23,8 @@ services:
       - key: SPHINX_TRUST_PROXY_HEADERS
         value: "1"
       # The demo is intentionally anonymous; rate limits are the control.
-      # Without this the live demo 401s on the first request after deploy,
-      # because Render's TCP peer is not loopback.
+      # Render also injects RENDER=true, which the API treats as the same
+      # opt-in when this variable is missing. Set it here anyway so a
+      # dashboard-created service matches the Blueprint without a rebuild.
       - key: SPHINX_ALLOW_ANONYMOUS
         value: "1"

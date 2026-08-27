@@ -84,8 +84,18 @@ def allow_anonymous() -> str:
     ``loopback`` (default) keeps the localhost demo open. ``private`` also
     allows RFC1918 / ULA / link-local. ``1`` / ``true`` / ``all`` is the
     explicit public-demo opt-in. ``0`` / ``never`` refuses everyone.
+
+    Render injects ``RENDER=true`` and the TCP peer is the proxy, not
+    loopback. Leaving the mode unset there 401s every visitor scan, so
+    Render defaults to the public-demo opt-in. An explicit value always
+    wins, including ``loopback`` if you really want that on a public host.
     """
-    return env("SPHINX_ALLOW_ANONYMOUS", "loopback").strip().lower()
+    configured = env("SPHINX_ALLOW_ANONYMOUS", "").strip().lower()
+    if configured:
+        return configured
+    if env_bool("RENDER"):
+        return "1"
+    return "loopback"
 
 
 # --- Groq-backed analyst chat ------------------------------------------------

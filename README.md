@@ -44,9 +44,9 @@ Dashboard env (never commit secrets):
 | `SPHINX_CHAT_MAX_CONCURRENT` | `1` |
 | `SPHINX_TRUST_PROXY_HEADERS` | `1` only because Render is the only ingress |
 
-Once the service has an HTTPS URL, put it here:
+**Live demo:** https://sphinx-tnna.onrender.com
 
-**Live demo:** _(add the Render URL when the service is up)_
+If scans 401 with “reachable from outside localhost”, the service is missing `SPHINX_ALLOW_ANONYMOUS=1` in the Render dashboard (Environment). Adding it restarts the running instance; you do not need a rebuild. Render also injects `RENDER=true`, which the API treats as the same public-demo opt-in when that variable is unset.
 
 [`render.yaml`](render.yaml) is the Blueprint for that service. Apply it from the Render dashboard (or create a Docker web service from this repo and copy the table above). Get a Groq key at [console.groq.com/keys](https://console.groq.com/keys).
 
@@ -108,7 +108,7 @@ phishing scan --tier A https://example.com   # URL string only, no network fetch
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `SPHINX_API_KEY` | unset | Optional `X-API-Key` on scan/chat/history/stats. A key baked into the UI is not auth |
-| `SPHINX_ALLOW_ANONYMOUS` | `loopback` | Who may call those routes with no key: `loopback`, `private`, `1`/`all`, `0`/`never` |
+| `SPHINX_ALLOW_ANONYMOUS` | `loopback` (Render: `1` if unset) | Who may call those routes with no key: `loopback`, `private`, `1`/`all`, `0`/`never` |
 | `GROQ_API_KEY` | unset | Optional operator fallback. Omit on a public host; visitors can still send `X-Groq-Api-Key` |
 | `PHISHING_DATABASE_URL` | SQLite under `data/` | Scan telemetry. Point at Postgres for compose `--profile postgres` |
 | `SPHINX_TRUST_PROXY_HEADERS` | `0` | Honour `X-Forwarded-For` only behind a proxy you control |
