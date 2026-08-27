@@ -118,7 +118,15 @@ jobs:
 
       - name: Smoke-test the container
         run: |
-          docker run -d --name scanner -p 8000:8000 phishing-scanner:ci
+          # Same peer problem as compose: the runner curls 127.0.0.1:8000, but
+          # inside the container the TCP peer is the Docker bridge (172.17.0.1),
+          # not loopback. Default SPHINX_ALLOW_ANONYMOUS=loopback would 401
+          # every /api/scan. Bind loopback so the runner port is not world-
+          # reachable; private covers the RFC1918 bridge gateway.
+          docker run -d --name scanner \
+            -p 127.0.0.1:8000:8000 \
+            -e SPHINX_ALLOW_ANONYMOUS=private \
+            phishing-scanner:ci
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8000/api/health; then
               echo "healthy"; break
