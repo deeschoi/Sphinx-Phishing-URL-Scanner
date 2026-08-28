@@ -44,7 +44,7 @@ Dashboard env (never commit secrets):
 | `SPHINX_CHAT_MAX_CONCURRENT` | `1` |
 | `SPHINX_TRUST_PROXY_HEADERS` | `1` only because Render is the only ingress |
 
-**Live demo:** https://sphinx-tnna.onrender.com
+### **Live demo:** https://sphinx-tnna.onrender.com
 
 If scans 401 with “reachable from outside localhost”, the service is missing `SPHINX_ALLOW_ANONYMOUS=1` in the Render dashboard (Environment). Adding it restarts the running instance; you do not need a rebuild. Render also injects `RENDER=true`, which the API treats as the same public-demo opt-in when that variable is unset.
 
