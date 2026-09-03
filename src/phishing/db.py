@@ -81,6 +81,10 @@ class Scan(Base):
     tls_checked: Mapped[bool] = mapped_column(default=False)
     features: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     signals: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    # Full scan payload stored so the analyst can bind to server-truth instead
+    # of the browser-echoed copy. Nullable so older rows (and the migration
+    # down-path) stay valid.
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=None)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -95,6 +99,21 @@ class Scan(Base):
             "page_fetched": self.page_fetched,
             "tls_checked": self.tls_checked,
         }
+
+    def to_full_dict(self) -> dict[str, Any]:
+        """Full scan payload for the analyst, falling back to the slim row.
+
+        Always injects ``id``, ``created_at``, and ``duration_ms`` from the
+        authoritative row columns so callers can rely on those being present
+        regardless of what was stored in result_json.
+        """
+        if self.result_json:
+            out = dict(self.result_json)
+            out["id"] = self.id
+            out["created_at"] = self.created_at.isoformat() if self.created_at else None
+            out.setdefault("duration_ms", self.duration_ms)
+            return out
+        return self.to_dict()
 
 
 _engine = None
@@ -309,6 +328,7 @@ def record_scan(result: dict[str, Any], duration_ms: int = 0) -> int | None:
                 tls_checked=bool(coverage.get("tls_checked", False)),
                 features=result.get("features") or {},
                 signals=result.get("signals") or [],
+                result_json=dict(result),
             )
             session.add(row)
             session.flush()
@@ -344,14 +364,16 @@ def scans_for_host(host: str, limit: int = 10) -> list[dict[str, Any]]:
 
 
 def scan_by_id(scan_id: int) -> dict[str, Any] | None:
-    """One stored scan by primary key, or ``None`` if it is missing.
+    """Full stored scan payload by primary key, or ``None`` if missing.
 
-    Used to cross-check a client-supplied chat payload against telemetry.
-    No new column: the existing row is already there.
+    Returns ``result_json`` when present (rows written after the schema
+    migration), otherwise falls back to the slim ``to_dict`` row (older rows
+    that pre-date the column).  The analyst uses this to bind tools to
+    server-truth rather than the browser-echoed copy.
     """
     with session_scope() as session:
         row = session.get(Scan, int(scan_id))
-        return row.to_dict() if row else None
+        return row.to_full_dict() if row else None
 
 
 def scan_stats(days: int = 30) -> dict[str, Any]:

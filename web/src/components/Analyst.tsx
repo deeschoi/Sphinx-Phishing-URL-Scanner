@@ -18,6 +18,7 @@ const TOOL_LABEL: Record<string, string> = {
   get_features: "read the extracted features",
   get_extraction_warnings: "checked what could not be measured",
   get_model_card: "read the model card",
+  get_feature_definition: "looked up a feature definition",
   get_host_history: "looked up this host in scan history",
   rescan_url: "ran a fresh scan",
 };

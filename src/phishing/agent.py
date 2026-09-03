@@ -306,7 +306,16 @@ def _normalise_scan(result: Any) -> dict[str, Any]:
 
 
 def _apply_stored_scan(scan: dict[str, Any]) -> dict[str, Any]:
-    """Override url/verdict/probability/model from telemetry when the id resolves.
+    """Replace the client payload with the server-stored version when available.
+
+    When ``result_json`` was persisted (rows written after the schema
+    migration), the stored payload is used wholesale as the authoritative
+    source of evidence for the analyst.  This prevents a browser-echoed or
+    browser-modified scan from feeding fabricated signals/features to the
+    tool loop.
+
+    Older rows only have the slim ``to_dict`` columns, so we fall back to the
+    previous field-by-field override for those.
 
     A missing id, a down database, or a restarted instance (empty SQLite)
     must not turn chat into a 500: fall back to the validated client values.
@@ -322,6 +331,23 @@ def _apply_stored_scan(scan: dict[str, Any]) -> dict[str, Any]:
         return scan
     if not row:
         return scan
+
+    # Full payload available (result_json column): use it directly, preserving
+    # the scan_id and marking any disagreement for the briefing.
+    if row.get("signals") or row.get("features") or row.get("coverage"):
+        out = dict(row)
+        out["scan_id"] = scan_id
+        # Compare on the fields a client is most likely to tamper with.
+        differed = any(
+            scan.get(k) != row.get(k)
+            for k in ("url", "verdict", "probability", "model")
+            if row.get(k) is not None
+        )
+        if differed:
+            out["_telemetry_disagreed"] = True
+        return out
+
+    # Slim row (pre-migration): override only the 4 canonical fields.
     out = dict(scan)
     differed = False
     for key in ("url", "verdict", "probability", "model"):
@@ -568,6 +594,33 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_feature_definition",
+            "description": (
+                "What a feature measures, how it is extracted, what each encoded value "
+                "means, and any known leaks or limitations. Use this when the user asks "
+                "why a feature scored the way it did, what a feature name means, or "
+                "whether a feature is reliable (e.g. why TLDLegitimateProb is near-zero "
+                "for .io / .app, why IsHTTPS is the scheme bit and not a certificate "
+                "check, or what a percent-encoding hint means for the scanned URL)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": (
+                            "Exact feature name, e.g. TLDLegitimateProb, IsHTTPS, "
+                            "NoOfExternalRef, HasPasswordField."
+                        ),
+                    }
+                },
+                "required": ["name"],
+            },
+        },
+    },
 ]
 
 
@@ -661,6 +714,115 @@ class ScanTools:
             "limitation": card.get("limitation"),
         }
 
+    def get_feature_definition(self, name: str) -> Any:
+        """Return what a feature measures, how it is extracted, known leaks, and value meanings.
+
+        Also surfaces a percent-decoding hint when the scanned URL uses
+        obfuscation and the feature is obfuscation-related.
+        """
+        from phishing.config import (
+            PHIUSIIL_FEATURE_LABELS,
+            PHIUSIIL_MODEL_FEATURES,
+            PHIUSIIL_PLATFORM_SUFFIXES,
+            PHIUSIIL_SPA_LINK_FEATURES,
+            VALUE_MEANING,
+        )
+        from phishing.features.phiusiil_url import decode_obfuscation_hint
+
+        name = (name or "").strip()
+        if not name:
+            return {"error": "Feature name is required."}
+
+        label = PHIUSIIL_FEATURE_LABELS.get(name)
+        if label is None:
+            # Offer a list of known names to help the model self-correct.
+            return {
+                "error": f"Unknown feature {name!r}.",
+                "available_features": PHIUSIIL_MODEL_FEATURES,
+            }
+
+        # Extraction method
+        is_url_feature = name in (
+            "URLLength", "DomainLength", "IsDomainIP", "TLDLength", "NoOfSubDomain",
+            "HasObfuscation", "NoOfObfuscatedChar", "ObfuscationRatio",
+            "NoOfLettersInURL", "LetterRatioInURL", "NoOfDegitsInURL", "DegitRatioInURL",
+            "NoOfEqualsInURL", "NoOfQMarkInURL", "NoOfAmpersandInURL",
+            "NoOfOtherSpecialCharsInURL", "SpacialCharRatioInURL",
+            "IsHTTPS", "CharContinuationRate", "TLDLegitimateProb",
+        )
+        extraction = (
+            "Computed from the URL string only — no network access required."
+            if is_url_feature
+            else "Requires fetching and parsing the page HTML (no JavaScript executed)."
+        )
+
+        # Known leaks / caveats per-feature
+        caveats: list[str] = []
+        if name == "TLDLegitimateProb":
+            caveats.append(
+                "Near-zero for .io (0.013) and .app (0.0015): real sites on these TLDs "
+                "score 0.83–0.95 on the URL string alone. This is a documented leak "
+                "pinned in tests/test_phiusiil.py. The value reflects training-set "
+                "prevalence, not actual safety."
+            )
+        elif name == "IsHTTPS":
+            caveats.append(
+                "This is the URL scheme bit (http vs https). No TLS handshake is made "
+                "and no certificate is inspected. A site with a self-signed cert still "
+                "scores 1. The training table has almost no legitimate http:// rows, so "
+                "plain-HTTP sites score as phishing structurally."
+            )
+        elif name == "NoOfExternalRef":
+            caveats.append(
+                "The #1 feature by importance (57% of page-model weight). It drifted "
+                "between the 2023 training crawl and 2026 markup: modern CDN-heavy "
+                "homepages score high here, which is the primary cause of the "
+                "page/URL disagreement rule firing."
+            )
+        elif name in ("LineOfCode", "LargestLineLength"):
+            caveats.append(
+                "Sensitive to minified HTML: a single 100k-character minified line "
+                "looks like obfuscation. LargestLineLength is imputed with the "
+                "legitimate-class median when the value exceeds 20,000 characters."
+            )
+        elif name in PHIUSIIL_SPA_LINK_FEATURES:
+            caveats.append(
+                "Imputed with the legitimate-class median when the page looks like a "
+                "JavaScript shell (few static links, many script tags). Widening that "
+                "heuristic was measured and cost 5.1 recall points."
+            )
+        elif name == "IsFreeHostingPlatform":
+            caveats.append(
+                "Not a model feature — a scanner routing hint only. In PhiUSIIL these "
+                f"suffixes ({', '.join(PHIUSIIL_PLATFORM_SUFFIXES[:5])}, …) cover "
+                "22,478 phishing rows and 1 legitimate row; trained as an input it "
+                "scored real docs sites at p ≈ 0.999."
+            )
+
+        # Value meanings table
+        meanings = VALUE_MEANING.get(name)
+
+        # Obfuscation hint for the current scan's URL when relevant
+        obfuscation_hint: str | None = None
+        if name in ("HasObfuscation", "NoOfObfuscatedChar", "ObfuscationRatio"):
+            url = self.result.get("url") or ""
+            hint = decode_obfuscation_hint(url)
+            if hint and hint != url:
+                obfuscation_hint = f"Percent-decoded form of the scanned URL: {hint[:400]}"
+
+        result: dict[str, Any] = {
+            "feature": name,
+            "label": label,
+            "extraction": extraction,
+        }
+        if meanings:
+            result["value_meanings"] = meanings
+        if caveats:
+            result["caveats"] = caveats
+        if obfuscation_hint:
+            result["obfuscation_hint"] = obfuscation_hint
+        return result
+
     def get_host_history(self, host: str) -> Any:
         from phishing.db import scans_for_host
 
@@ -690,9 +852,22 @@ class ScanTools:
             return {"error": f"Invalid URL: {exc}"}
         except Exception as exc:  # noqa: BLE001 — a tool must return, not raise
             return {"error": f"Scan failed: {type(exc).__name__}"}
+
+        # Persist to History so the new scan shows up, and capture the id.
+        try:
+            from phishing.db import record_scan
+            new_id = record_scan(fresh)
+            if new_id is not None:
+                fresh["scan_id"] = new_id
+        except Exception:  # noqa: BLE001 — telemetry must not fail the tool
+            pass
+
+        # Rebind so subsequent get_signals / get_features cite the new page.
         for extra in (_host_of(fresh.get("url") or url), _host_of(fresh.get("final_url"))):
             if extra:
                 self._allowed_hosts.add(extra)
+        self.result = _normalise_scan(fresh)
+
         return {
             "url": fresh.get("url"),
             "final_url": fresh.get("final_url"),
@@ -702,6 +877,7 @@ class ScanTools:
             "url_only": fresh.get("url_only"),
             "reachability": (fresh.get("coverage") or {}).get("reachability"),
             "rationale": fresh.get("rationale"),
+            "scan_id": fresh.get("scan_id"),
             "top_signals": [
                 {
                     "label": s.get("label"),
@@ -825,15 +1001,26 @@ def answer(
     ]
     used: list[dict[str, Any]] = []
 
+    active_model = model or GROQ_MODEL
+
     for _ in range(max(1, GROQ_MAX_TOOL_STEPS)):
-        payload = {
-            "model": model or GROQ_MODEL,
+        payload: dict[str, Any] = {
+            "model": active_model,
             "messages": convo,
             "tools": TOOLS,
             "tool_choice": "auto",
             "temperature": 0.2,
-            "max_completion_tokens": 1200,
+            # 2400 gives reasoning models (gpt-oss, o-series) enough budget for
+            # an internal scratchpad AND a visible Findings / Commentary reply.
+            # At 1200 the scratchpad consumed the whole window, returning empty
+            # content and triggering AgentUnavailableError on every reasoning turn.
+            "max_completion_tokens": 2400,
         }
+        # reasoning_effort tells Groq's reasoning models to emit a visible
+        # content field within the token budget rather than spending everything
+        # on hidden chain-of-thought. Ignored by non-reasoning models.
+        if "gpt-oss" in active_model or active_model.startswith("o1") or active_model.startswith("o3"):
+            payload["reasoning_effort"] = "default"
         data = _post(payload, api_key=key)
         choices = data.get("choices") or []
         if not choices:
@@ -843,8 +1030,9 @@ def answer(
         if not tool_calls:
             reply = (message.get("content") or "").strip()
             if not reply:
-                # gpt-oss spends max_completion_tokens on reasoning first, so a
-                # truncated turn comes back with an empty content field.
+                # Should not happen after raising max_completion_tokens and
+                # setting reasoning_effort, but keep the guard in case the
+                # model is still truncated at an unusually long tool chain.
                 raise AgentUnavailableError(
                     "The analyst returned an empty answer "
                     f"(finish_reason={choices[0].get('finish_reason')!r}). Try rephrasing."
@@ -883,26 +1071,26 @@ def answer(
             )
 
     # Out of tool budget: ask for a final answer with no tools on the table.
-    data = _post(
-        {
-            "model": model or GROQ_MODEL,
-            "messages": [
-                *convo,
-                {
-                    "role": "system",
-                    "content": "Tool budget spent. Answer now from the evidence gathered.",
-                },
-            ],
-            "temperature": 0.2,
-            "max_completion_tokens": 1200,
-        },
-        api_key=key,
-    )
+    budget_payload: dict[str, Any] = {
+        "model": active_model,
+        "messages": [
+            *convo,
+            {
+                "role": "system",
+                "content": "Tool budget spent. Answer now from the evidence gathered.",
+            },
+        ],
+        "temperature": 0.2,
+        "max_completion_tokens": 2400,
+    }
+    if "gpt-oss" in active_model or active_model.startswith("o1") or active_model.startswith("o3"):
+        budget_payload["reasoning_effort"] = "default"
+    data = _post(budget_payload, api_key=key)
     final = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
     if not final.strip():
         raise AgentUnavailableError("The analyst returned an empty answer. Try rephrasing.")
     return {
         "reply": final.strip(),
         "tools_used": used,
-        "model": data.get("model", model or GROQ_MODEL),
+        "model": data.get("model", active_model),
     }
