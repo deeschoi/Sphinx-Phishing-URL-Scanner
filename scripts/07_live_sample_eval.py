@@ -35,7 +35,40 @@ FLAGGED = {"phishing", "suspicious"}
 
 # Fields kept for each misclassified host, so a regression can be attributed
 # to the page model or the URL model without re-running the scan.
-_DETAIL = ("url", "verdict", "probability", "url_probability", "page_probability")
+_DETAIL = (
+    "url",
+    "verdict",
+    "probability",
+    "url_probability",
+    "page_probability",
+    "url_disagreement",
+)
+
+# Known-good sites on the same free-hosting suffixes the mirror rule requires.
+# PhiUSIIL's legitimate class has none of these, so the live sample cannot
+# measure that FPR. Run with --platform-legit.
+PLATFORM_LEGIT_URLS = [
+    "https://pages.github.io/",
+    "https://facebook.github.io/react/",
+    "https://facebook.github.io/docusaurus/",
+    "https://twbs.github.io/bootstrap/",
+    "https://tailwindlabs.github.io/tailwindcss/",
+    "https://webpack.github.io/",
+    "https://redux.js.org/",
+    "https://nextjs.vercel.app/",
+    "https://create-react-app.dev/",
+    "https://vite.dev/",
+    "https://astro.build/",
+    "https://svelte.dev/",
+    "https://nuxt.com/",
+    "https://remix.run/",
+    "https://docs.netlify.com/",
+    "https://workers.cloudflare.com/",
+    "https://firebase.google.com/docs",
+    "https://docusaurus.io/",
+    "https://jekyllrb.com/",
+    "https://gohugo.io/",
+]
 
 
 def _disable_shap() -> None:
@@ -87,6 +120,7 @@ def _scan_one(url: str, label: int, timeout: int) -> dict:
         url_probability=result.get("url_probability"),
         url_pattern_risk=result.get("url_pattern_risk"),
         url_only=result.get("url_only"),
+        url_disagreement=result.get("url_disagreement"),
         reachability=(result.get("coverage") or {}).get("reachability"),
         model=result.get("model"),
         error=None,
@@ -147,15 +181,30 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, default=8)
     parser.add_argument("--workers", type=int, default=16)
     parser.add_argument("--out", type=Path, default=REPORTS_DIR / "phiusiil_live_sample_eval.json")
+    parser.add_argument(
+        "--platform-legit",
+        action="store_true",
+        help=(
+            "Scan a hand-built list of real platform-hosted / docs sites instead "
+            "of the PhiUSIIL sample. Reports how often the mirror disagreement "
+            "rule flags them (the FPR the live sample cannot measure)."
+        ),
+    )
     args = parser.parse_args()
 
     ensure_dirs()
     _disable_shap()
 
-    legit = _sample_unique_hosts(LEGIT_CSV, args.n_per_class, args.seed)
-    phish = _sample_unique_hosts(PHISH_CSV, args.n_per_class, args.seed)
-    jobs = [(url, 0) for url in legit] + [(url, 1) for url in phish]
-    print(f"scanning {len(jobs)} hosts (seed {args.seed}, {args.n_per_class}/class)…")
+    if args.platform_legit:
+        jobs = [(url, 0) for url in PLATFORM_LEGIT_URLS]
+        if args.out == REPORTS_DIR / "phiusiil_live_sample_eval.json":
+            args.out = REPORTS_DIR / "platform_legit_eval.json"
+        print(f"scanning {len(jobs)} platform-hosted legitimate URLs…")
+    else:
+        legit = _sample_unique_hosts(LEGIT_CSV, args.n_per_class, args.seed)
+        phish = _sample_unique_hosts(PHISH_CSV, args.n_per_class, args.seed)
+        jobs = [(url, 0) for url in legit] + [(url, 1) for url in phish]
+        print(f"scanning {len(jobs)} hosts (seed {args.seed}, {args.n_per_class}/class)…")
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         rows = list(
@@ -197,6 +246,16 @@ def main() -> None:
         f"  unrated {unrated['n_unrated']} "
         f"({unrated['n_unrated_phishing']} phishing): {unrated['url_pattern_risk']}"
     )
+    if args.platform_legit:
+        flagged = [r for r in rows if r["verdict"] in FLAGGED]
+        disagreed = [r for r in rows if r.get("url_disagreement")]
+        print(
+            f"  mirror-rule FPR on this list: "
+            f"{len(flagged)}/{len(rows)} flagged, "
+            f"{len(disagreed)}/{len(rows)} disagreement"
+        )
+        for row in flagged:
+            print(f"    {row['verdict']} p={row.get('probability')}  {row['url']}")
     print(f"\nWrote {args.out}")
 
 

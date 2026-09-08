@@ -164,6 +164,12 @@ def extract_phiusiil_url_features(
     other_special = sum(
         (not c.isalnum()) and c not in {":", "/", "=", "?", "&", "%"} for c in count_url
     )
+    if tld_prob and tld in tld_prob:
+        tld_prior = float(tld_prob[tld])
+    elif tld_prob:
+        tld_prior = float(sum(tld_prob.values()) / len(tld_prob))
+    else:
+        tld_prior = 0.0
 
     return {
         "URLLength": float(len(count_url)),
@@ -185,7 +191,7 @@ def extract_phiusiil_url_features(
         "SpacialCharRatioInURL": float(other_special / length),
         "IsHTTPS": float(1 if parsed.scheme.lower() == "https" else 0),
         "CharContinuationRate": float(char_continuation_rate(host, tld)),
-        "TLDLegitimateProb": float((tld_prob or {}).get(tld, 0.0)),
+        "TLDLegitimateProb": tld_prior,
     }
 
 

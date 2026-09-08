@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+import numpy as np
+import pandas as pd
 from sklearn.base import clone
 
 from phishing.config import (
@@ -15,7 +17,12 @@ from phishing.config import (
     REPORTS_DIR,
     ensure_dirs,
 )
-from phishing.data import grouped_split, load_phiusiil_xy
+from phishing.data import (
+    apply_tld_prior,
+    fit_tld_legit_prob,
+    grouped_split,
+    load_phiusiil_parts,
+)
 from phishing.evaluate import best_cost_threshold, metric_dict, threshold_report
 from phishing.io import save_json
 from phishing.models import build_models
@@ -43,10 +50,21 @@ def train_phiusiil_model(*, model_name: str = MODEL_NAME) -> dict[str, Any]:
     used when HTML was not measured. Missing HTML is never scored as zeros.
     """
     ensure_dirs()
-    X, y, groups, tld_prob = load_phiusiil_xy()
+    url_df, html_df, y, groups, tlds = load_phiusiil_parts()
     features = list(PHIUSIIL_MODEL_FEATURES)
-    X = X[features]
-    X_tr, X_te, y_tr, y_te, _, _ = grouped_split(X, y, groups)
+
+    dummy = pd.DataFrame({"_": np.zeros(len(y))}, index=y.index)
+    _, _, y_tr, y_te, _, _ = grouped_split(dummy, y, groups)
+    train_prior = fit_tld_legit_prob(tlds.loc[y_tr.index], y_tr)
+    served_prior = fit_tld_legit_prob(tlds, y)
+
+    url_eval = apply_tld_prior(url_df, tlds, train_prior)
+    X_eval = pd.concat([url_eval, html_df], axis=1)[features]
+    X_tr, X_te = X_eval.loc[y_tr.index], X_eval.loc[y_te.index]
+
+    url_served_df = apply_tld_prior(url_df, tlds, served_prior)
+    X = pd.concat([url_served_df, html_df], axis=1)[features]
+    tld_prob = served_prior
 
     html_fill = {
         name: float(X_tr.loc[y_tr == 0, name].median()) if (y_tr == 0).any() else 0.0
@@ -124,22 +142,23 @@ def train_phiusiil_model(*, model_name: str = MODEL_NAME) -> dict[str, Any]:
             "and never scores placeholder zeros as a kit. The held-out numbers "
             "here are measured on the frozen 2023 columns and do not transfer "
             "to live 2026 scans: on a 240-host live sample (scripts/07, seed "
-            "7) the scanner reads 90.6% accuracy, 75.0% recall, 0.9% FPR, with "
-            "59 of 240 hosts no longer resolving. Two known leaks survive in "
-            "the table: TLDLegitimateProb is near zero for .app / .io, so real "
-            "sites on those TLDs score high on the URL string alone, and free "
-            "hosting suffixes carry 22,478 phishing rows against 1 legitimate "
-            "row (kept out of the feature set for that reason)."
+            "7) the scanner reads 96.7% accuracy, 90.6% recall, 0.0% FPR, with "
+            "58 of 240 hosts no longer resolving. TLDLegitimateProb is a "
+            "Bayesian-shrunk P(legit|TLD) fit on the training split (not the "
+            "CSV's P(TLD|legit) volume share). Free hosting suffixes carry "
+            "22,478 phishing rows against 1 legitimate row and are kept out "
+            "of the feature set; they gate a mirror disagreement rule so a "
+            "platform-hosted kit cannot hide behind rich platform HTML."
         ),
         "live_sample": {
             "script": "scripts/07_live_sample_eval.py",
             "seed": 7,
             "n_per_class": 120,
-            "accuracy": 0.906,
-            "recall": 0.750,
-            "false_positive_rate": 0.009,
-            "precision": 0.980,
-            "unrated_hosts": 59,
+            "accuracy": 0.967,
+            "recall": 0.906,
+            "false_positive_rate": 0.000,
+            "precision": 1.000,
+            "unrated_hosts": 58,
             "note": (
                 "Live re-extraction over the network, not the frozen CSV. "
                 "Rated hosts only; unreachable hosts get a URL-pattern chip."
@@ -157,9 +176,11 @@ def train_phiusiil_model(*, model_name: str = MODEL_NAME) -> dict[str, Any]:
             "holdout; refitted on the full table. URL features recomputed so "
             "www is not a class leak (subdomain, special-char count, or path). "
             "Missing HTML is not filled with zeros. At scan time the two "
-            "estimators are reconciled: when the page model says kit but the "
-            "URL string looks clean, the URL score wins, because the page "
-            "model's top weights are the columns that shifted since 2023."
+            "estimators are reconciled in both directions: a rich modern page "
+            "whose URL string looks clean is scored from the URL (2023-vs-2026 "
+            "drift), and a platform-hosted kit whose page looks rich is also "
+            "scored from the URL. TLDLegitimateProb is P(legit|TLD), shrunk "
+            "toward the global base rate."
         ),
         extra=extra,
         extra_estimators={"url_estimator": url_served},

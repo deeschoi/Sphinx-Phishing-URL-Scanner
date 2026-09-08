@@ -228,6 +228,41 @@ body {
   box-shadow: none;
 }
 
+.batch-form { display: grid; gap: 12px; }
+.batch-label { color: var(--muted); font-size: 13.5px; }
+.batch-input {
+  width: 100%; min-height: 160px; resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--line-gold);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+.batch-input:focus {
+  border-color: var(--accent);
+  box-shadow: none;
+}
+
+.host-unicode {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13.5px;
+  font-family: var(--font-mono);
+}
+.result-actions { margin-top: 20px; }
+.hop-block { grid-column: 1 / -1; }
+.hop-block dt { margin-bottom: 6px; }
+.hop-block dd { text-align: left; font-weight: 400; }
+.hop-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  word-break: break-all;
+}
+.hop-list li { margin: 4px 0; }
+
 :where(a, button, input, select, textarea, [tabindex]):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;

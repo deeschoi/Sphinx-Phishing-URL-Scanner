@@ -50,18 +50,23 @@ class RateLimiter:
         self._lock = threading.Lock()
         self._slots = threading.BoundedSemaphore(self.max_concurrent)
 
-    def check(self, client: str, now: float | None = None) -> None:
-        """Raise 429 when ``client`` has spent its per-minute budget."""
+    def check(self, client: str, now: float | None = None, cost: int = 1) -> None:
+        """Raise 429 when ``client`` has spent its per-minute budget.
+
+        ``cost`` charges more than one slot (a batch of N URLs spends N).
+        """
         if self.per_minute <= 0:
             return
+        cost = max(1, int(cost))
         now = time.monotonic() if now is None else now
         with self._lock:
             hits = self._hits[client]
             cutoff = now - WINDOW_SECONDS
             while hits and hits[0] < cutoff:
                 hits.popleft()
-            if len(hits) >= self.per_minute:
-                retry_after = max(1, int(WINDOW_SECONDS - (now - hits[0])))
+            if len(hits) + cost > self.per_minute:
+                oldest = hits[0] if hits else now
+                retry_after = max(1, int(WINDOW_SECONDS - (now - oldest)))
                 raise HTTPException(
                     status_code=429,
                     detail=(
@@ -70,7 +75,8 @@ class RateLimiter:
                     ),
                     headers={"Retry-After": str(retry_after)},
                 )
-            hits.append(now)
+            for _ in range(cost):
+                hits.append(now)
             self._evict(now)
 
     def _evict(self, now: float) -> None:

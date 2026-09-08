@@ -58,6 +58,7 @@ describe("History", () => {
     );
     expect(await screen.findByText("example.com")).toBeInTheDocument();
     expect(screen.getByText("suspicious")).toBeInTheDocument();
+    expect(screen.getByText("Open")).toBeInTheDocument();
     expect(screen.getByText("Scan again")).toBeInTheDocument();
   });
 });
@@ -87,6 +88,10 @@ describe("Stats", () => {
           total_scans_all_time: 11,
           verdicts: { "probably safe": 2, suspicious: 1 },
           daily: [{ date: "2026-08-16", scans: 3, mean_probability: 0.21 }],
+          url_only: 1,
+          page: 2,
+          disagreement: 0,
+          withheld: 0,
         }),
       ),
     );
@@ -103,6 +108,8 @@ describe("Stats", () => {
     expect(screen.getAllByText(/11 all time/).length).toBeGreaterThan(0);
     expect(screen.getByText("3")).toBeInTheDocument();
     expect(screen.getByText("Verdict mix")).toBeInTheDocument();
+    expect(screen.getByText("page-model scans")).toBeInTheDocument();
+    expect(screen.getByText("disagreement rule")).toBeInTheDocument();
   });
 });
 
@@ -159,5 +166,6 @@ describe("Layout", () => {
     );
     expect(screen.getByRole("heading", { name: "Sphinx" })).toBeInTheDocument();
     expect(screen.getByText("phishing scanner")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Batch" })).toBeInTheDocument();
   });
 });

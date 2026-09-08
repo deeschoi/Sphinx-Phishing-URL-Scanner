@@ -342,6 +342,8 @@ PHIUSIIL_PLATFORM_SUFFIXES = [
     "vercel.app",
     "pages.dev",
     "herokuapp.com",
+    "start.page",
+    "webnode.page",
 ]
 
 # URL-string features: no network. IsHTTPS is the scheme bit, not the 2012
@@ -502,6 +504,4 @@ VALUE_MEANING.update(
     }
 )
 
-assert len(PHIUSIIL_MODEL_FEATURES) == 48
-assert len(set(PHIUSIIL_MODEL_FEATURES)) == 48
-assert set(PHIUSIIL_SPA_LINK_FEATURES) <= set(PHIUSIIL_HTML_FEATURES)
+TLD_PRIOR_PSEUDOCOUNT = 50

@@ -455,7 +455,7 @@ thing, and on the live sample this model misses about a quarter of the \
 phishing pages it can reach.
 3. Distinguish the two accuracy numbers whenever accuracy comes up. The \
 held-out figure (~99.9%) is measured on frozen 2023 dataset columns. The live \
-figure (~90.6% accuracy, 75% recall) is the same model re-extracting features \
+figure (~96.7% accuracy, 90.6% recall) is the same model re-extracting features \
 over the network, and that is what a scan of a real URL gets.
 4. If the verdict was withheld (`unreachable`, `not_probed`) or the scan was \
 URL-only, lead with that. A URL-string score is not a judgment of a live site.
@@ -1019,7 +1019,11 @@ def answer(
         # reasoning_effort tells Groq's reasoning models to emit a visible
         # content field within the token budget rather than spending everything
         # on hidden chain-of-thought. Ignored by non-reasoning models.
-        if "gpt-oss" in active_model or active_model.startswith("o1") or active_model.startswith("o3"):
+        if (
+            "gpt-oss" in active_model
+            or active_model.startswith("o1")
+            or active_model.startswith("o3")
+        ):
             payload["reasoning_effort"] = "default"
         data = _post(payload, api_key=key)
         choices = data.get("choices") or []
@@ -1083,7 +1087,11 @@ def answer(
         "temperature": 0.2,
         "max_completion_tokens": 2400,
     }
-    if "gpt-oss" in active_model or active_model.startswith("o1") or active_model.startswith("o3"):
+    if (
+        "gpt-oss" in active_model
+        or active_model.startswith("o1")
+        or active_model.startswith("o3")
+    ):
         budget_payload["reasoning_effort"] = "default"
     data = _post(budget_payload, api_key=key)
     final = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""

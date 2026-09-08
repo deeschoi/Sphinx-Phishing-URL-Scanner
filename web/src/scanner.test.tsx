@@ -113,6 +113,23 @@ function stubFetch(handler: (url: string, init?: RequestInit) => Promise<Respons
 
 const AGENT_OFF = { enabled: false, model: null, detail: "not configured" };
 
+function stubScanApi(
+  result: ScanResult | ((url: string, init?: RequestInit) => Promise<Response>),
+) {
+  return stubFetch((url, init) => {
+    if (url.includes("/api/agent")) return jsonResponse(AGENT_OFF);
+    if (typeof result === "function") return result(url, init);
+    if (url.includes("/api/scan/jobs") && init?.method === "POST") {
+      return jsonResponse({ job_id: "job-1" }, 202);
+    }
+    if (url.includes("/api/scan/jobs/")) {
+      return jsonResponse({ job_id: "job-1", status: "done", result });
+    }
+    if (url.includes("/api/scans/")) return jsonResponse(result);
+    return jsonResponse(result);
+  });
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -129,11 +146,7 @@ describe("Scanner", () => {
   });
 
   it("hides the idle primer after a scan returns", async () => {
-    stubFetch((url) =>
-      url.includes("/api/agent")
-        ? jsonResponse(AGENT_OFF)
-        : jsonResponse(scanResult()),
-    );
+    stubScanApi(scanResult());
     const user = userEvent.setup();
     renderScanner();
 
@@ -148,11 +161,7 @@ describe("Scanner", () => {
   });
 
   it("renders a verdict, its rationale, and the live-sample metrics", async () => {
-    stubFetch((url) =>
-      url.includes("/api/agent")
-        ? jsonResponse(AGENT_OFF)
-        : jsonResponse(scanResult()),
-    );
+    stubScanApi(scanResult());
     const user = userEvent.setup();
     renderScanner();
 
@@ -169,11 +178,16 @@ describe("Scanner", () => {
   });
 
   it("shows the API's message when a private target is refused", async () => {
-    stubFetch((url) =>
-      url.includes("/api/agent")
-        ? jsonResponse(AGENT_OFF)
-        : jsonResponse({ detail: "Refusing to scan a private or local address." }, 403),
-    );
+    stubScanApi((_url, init) => {
+      if (_url.includes("/api/scan/jobs") && init?.method === "POST") {
+        return jsonResponse({ job_id: "job-1" }, 202);
+      }
+      return jsonResponse({
+        job_id: "job-1",
+        status: "error",
+        error: "Refusing to scan a private or local address.",
+      });
+    });
     const user = userEvent.setup();
     renderScanner();
 
@@ -186,13 +200,24 @@ describe("Scanner", () => {
   });
 
   it("keeps the previous result on screen when a later scan fails", async () => {
-    let call = 0;
-    stubFetch((url) => {
-      if (url.includes("/api/agent")) return jsonResponse(AGENT_OFF);
-      call += 1;
-      return call === 1
-        ? jsonResponse(scanResult())
-        : jsonResponse({ detail: "Scan failed: ConnectionError" }, 500);
+    let posts = 0;
+    stubScanApi((url, init) => {
+      if (url.includes("/api/scan/jobs") && init?.method === "POST") {
+        posts += 1;
+        return jsonResponse({ job_id: `job-${posts}` }, 202);
+      }
+      if (url.includes("/api/scan/jobs/job-1")) {
+        return jsonResponse({
+          job_id: "job-1",
+          status: "done",
+          result: scanResult(),
+        });
+      }
+      return jsonResponse({
+        job_id: "job-2",
+        status: "error",
+        error: "Scan failed: ConnectionError",
+      });
     });
     const user = userEvent.setup();
     renderScanner();
@@ -212,29 +237,25 @@ describe("Scanner", () => {
   });
 
   it("withholds a rating for an unreachable host but still shows the URL chip", async () => {
-    stubFetch((url) =>
-      url.includes("/api/agent")
-        ? jsonResponse(AGENT_OFF)
-        : jsonResponse(
-            scanResult({
-              verdict: "unreachable",
-              risk: null,
-              prediction: null,
-              url_only: true,
-              url_pattern_risk: "phishing",
-              probability: 0.94,
-              rationale: "The hostname does not resolve, so this is not a live-site judgment.",
-              coverage: {
-                ...scanResult().coverage,
-                reachability: "unreachable",
-                dns_ok: false,
-                page_fetched: false,
-                https: false,
-                tls_checked: false,
-                http_status: null,
-              },
-            }),
-          ),
+    stubScanApi(
+      scanResult({
+        verdict: "unreachable",
+        risk: null,
+        prediction: null,
+        url_only: true,
+        url_pattern_risk: "phishing",
+        probability: 0.94,
+        rationale: "The hostname does not resolve, so this is not a live-site judgment.",
+        coverage: {
+          ...scanResult().coverage,
+          reachability: "unreachable",
+          dns_ok: false,
+          page_fetched: false,
+          https: false,
+          tls_checked: false,
+          http_status: null,
+        },
+      }),
     );
     const user = userEvent.setup();
     renderScanner();
@@ -251,30 +272,26 @@ describe("Scanner", () => {
   });
 
   it("does not show a legitimate URL chip for an unreachable clean origin", async () => {
-    stubFetch((url) =>
-      url.includes("/api/agent")
-        ? jsonResponse(AGENT_OFF)
-        : jsonResponse(
-            scanResult({
-              verdict: "unreachable",
-              risk: null,
-              prediction: null,
-              url_only: true,
-              url_pattern_risk: null,
-              probability: 0.06,
-              rationale:
-                "The hostname does not resolve, so this is not a live-site judgment. A clean-looking origin is not a finding that the site is safe.",
-              coverage: {
-                ...scanResult().coverage,
-                reachability: "unreachable",
-                dns_ok: false,
-                page_fetched: false,
-                https: false,
-                tls_checked: false,
-                http_status: null,
-              },
-            }),
-          ),
+    stubScanApi(
+      scanResult({
+        verdict: "unreachable",
+        risk: null,
+        prediction: null,
+        url_only: true,
+        url_pattern_risk: null,
+        probability: 0.06,
+        rationale:
+          "The hostname does not resolve, so this is not a live-site judgment. A clean-looking origin is not a finding that the site is safe.",
+        coverage: {
+          ...scanResult().coverage,
+          reachability: "unreachable",
+          dns_ok: false,
+          page_fetched: false,
+          https: false,
+          tls_checked: false,
+          http_status: null,
+        },
+      }),
     );
     const user = userEvent.setup();
     renderScanner();
@@ -289,13 +306,7 @@ describe("Scanner", () => {
   });
 
   it("labels an offline scan instead of printing the raw verdict", async () => {
-    stubFetch((url) =>
-      url.includes("/api/agent")
-        ? jsonResponse(AGENT_OFF)
-        : jsonResponse(
-            scanResult({ verdict: "not_probed", risk: null, url_only: true }),
-          ),
-    );
+    stubScanApi(scanResult({ verdict: "not_probed", risk: null, url_only: true }));
     const user = userEvent.setup();
     renderScanner();
 
@@ -307,17 +318,13 @@ describe("Scanner", () => {
   });
 
   it("shows both estimator scores when the disagreement rule fires", async () => {
-    stubFetch((url) =>
-      url.includes("/api/agent")
-        ? jsonResponse(AGENT_OFF)
-        : jsonResponse(
-            scanResult({
-              url_disagreement: true,
-              page_probability: 0.999,
-              url_probability: 0.03,
-              probability: 0.03,
-            }),
-          ),
+    stubScanApi(
+      scanResult({
+        url_disagreement: true,
+        page_probability: 0.999,
+        url_probability: 0.03,
+        probability: 0.03,
+      }),
     );
     const user = userEvent.setup();
     renderScanner();
@@ -331,15 +338,11 @@ describe("Scanner", () => {
   });
 
   it("reports the landing page after a redirect, not the URL that was typed", async () => {
-    stubFetch((url) =>
-      url.includes("/api/agent")
-        ? jsonResponse(AGENT_OFF)
-        : jsonResponse(
-            scanResult({
-              url: "https://short.example/abc",
-              final_url: "https://phish.example/login",
-            }),
-          ),
+    stubScanApi(
+      scanResult({
+        url: "https://short.example/abc",
+        final_url: "https://phish.example/login",
+      }),
     );
     const user = userEvent.setup();
     renderScanner();
@@ -351,28 +354,73 @@ describe("Scanner", () => {
     expect(screen.getByText(/Redirected from/)).toBeInTheDocument();
   });
 
-  it("scans automatically when arriving with ?url=", async () => {
-    const spy = stubFetch((url) =>
-      url.includes("/api/agent")
-        ? jsonResponse(AGENT_OFF)
-        : jsonResponse(scanResult({ url: "https://preset.example" })),
+  it("lists redirect hops and a decoded punycode host", async () => {
+    stubScanApi(
+      scanResult({
+        url: "https://bit.ly/abc",
+        final_url: "https://xn--e1afmkfd.xn--p1ai/login",
+        host_unicode: "пример.рф",
+        coverage: {
+          ...scanResult().coverage,
+          redirects: 1,
+          redirect_hops: [
+            { url: "https://bit.ly/abc", host: "bit.ly", shortener: true },
+            {
+              url: "https://xn--e1afmkfd.xn--p1ai/login",
+              host: "xn--e1afmkfd.xn--p1ai",
+              shortener: false,
+            },
+          ],
+        },
+      }),
     );
+    const user = userEvent.setup();
+    renderScanner();
+
+    await user.type(screen.getByLabelText("URL to scan"), "https://bit.ly/abc");
+    await user.click(screen.getByRole("button", { name: "Scan" }));
+
+    expect(await screen.findByText("Unicode host: пример.рф")).toBeInTheDocument();
+    expect(screen.getByText(/bit\.ly\/abc \(shortener\)/)).toBeInTheDocument();
+  });
+
+  it("scans automatically when arriving with ?url=", async () => {
+    const spy = stubScanApi(scanResult({ url: "https://preset.example" }));
     renderScanner("/?url=https%3A%2F%2Fpreset.example");
 
     expect(await screen.findByText("legitimate")).toBeInTheDocument();
     await waitFor(() =>
       expect(
-        spy.mock.calls.some(([input]) => String(input).includes("/api/scan")),
+        spy.mock.calls.some(([input]) => String(input).includes("/api/scan/jobs")),
       ).toBe(true),
     );
   });
 
+  it("hydrates a stored scan from ?scan= without submitting a job", async () => {
+    const spy = stubScanApi(scanResult({ url: "https://stored.example", scan_id: 9 }));
+    renderScanner("/?scan=9");
+
+    expect(await screen.findByText("legitimate")).toBeInTheDocument();
+    expect(
+      spy.mock.calls.some(([input]) => String(input).includes("/api/scans/9")),
+    ).toBe(true);
+    expect(
+      spy.mock.calls.some(([input]) => String(input).includes("/api/scan/jobs")),
+    ).toBe(false);
+  });
+
   it("does not start a second scan while one is in flight", async () => {
-    let resolveScan: (value: Response) => void = () => {};
-    const spy = stubFetch((url) => {
-      if (url.includes("/api/agent")) return jsonResponse(AGENT_OFF);
-      return new Promise<Response>((resolve) => {
-        resolveScan = resolve;
+    let resolvePost: (value: Response) => void = () => {};
+    const spy = stubScanApi((url, init) => {
+      if (url.includes("/api/scan/jobs") && init?.method === "POST") {
+        return new Promise<Response>((resolve) => {
+          resolvePost = resolve;
+        });
+      }
+      return jsonResponse({
+        job_id: "job-1",
+        status: "done",
+        result: scanResult(),
       });
     });
     const user = userEvent.setup();
@@ -382,16 +430,18 @@ describe("Scanner", () => {
     // The chips are disabled while busy, so a second click cannot fire.
     expect(screen.getByRole("button", { name: "neverssl.com" })).toBeDisabled();
 
-    resolveScan({
+    resolvePost({
       ok: true,
-      status: 200,
-      json: () => Promise.resolve(scanResult()),
+      status: 202,
+      json: () => Promise.resolve({ job_id: "job-1" }),
     } as Response);
 
     expect(await screen.findByText("legitimate")).toBeInTheDocument();
-    const scanCalls = spy.mock.calls.filter(([input]) =>
-      String(input).includes("/api/scan"),
+    const postCalls = spy.mock.calls.filter(
+      ([input, init]) =>
+        String(input).includes("/api/scan/jobs") &&
+        (init as RequestInit | undefined)?.method === "POST",
     );
-    expect(scanCalls).toHaveLength(1);
+    expect(postCalls).toHaveLength(1);
   });
 });

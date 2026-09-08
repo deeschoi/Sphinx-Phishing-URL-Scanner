@@ -42,6 +42,34 @@ export function scanUrl(url: string, timeout = 8, signal?: AbortSignal) {
   });
 }
 
+export function createScanJob(url: string, timeout = 8, signal?: AbortSignal) {
+  return request<{ job_id: string }>("/api/scan/jobs", {
+    method: "POST",
+    body: JSON.stringify({ url, timeout }),
+    signal,
+  });
+}
+
+export function fetchScanJob(jobId: string, signal?: AbortSignal) {
+  return request<import("./types").ScanJob>(`/api/scan/jobs/${jobId}`, { signal });
+}
+
+export function createScanBatch(urls: string[], timeout = 8, signal?: AbortSignal) {
+  return request<{ batch_id: string; job_ids: string[] }>("/api/scan/batch", {
+    method: "POST",
+    body: JSON.stringify({ urls, timeout }),
+    signal,
+  });
+}
+
+export function fetchScanBatch(batchId: string, signal?: AbortSignal) {
+  return request<import("./types").ScanBatch>(`/api/scan/batch/${batchId}`, { signal });
+}
+
+export function fetchScan(scanId: number | string, signal?: AbortSignal) {
+  return request<import("./types").ScanResult>(`/api/scans/${scanId}`, { signal });
+}
+
 export function fetchAgentStatus() {
   return request<import("./types").AgentStatus>("/api/agent");
 }

@@ -13,6 +13,8 @@ services:
         value: "8"
       - key: SPHINX_SCAN_MAX_CONCURRENT
         value: "2"
+      - key: SPHINX_JOB_WORKERS
+        value: "2"
       - key: SPHINX_CHAT_RATE_PER_MINUTE
         value: "5"
       - key: SPHINX_CHAT_MAX_CONCURRENT

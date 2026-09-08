@@ -87,8 +87,13 @@ Guarded routes require `X-API-Key` when `SPHINX_API_KEY` is set. When it is unse
 | Method | Path | Auth | Body / query |
 |---|---|---|---|
 | `POST` | `/api/scan` | guarded | `{ "url", "timeout"? }` |
+| `POST` | `/api/scan/jobs` | guarded | `{ "url", "timeout"? }` → 202 `{ job_id }` |
+| `GET` | `/api/scan/jobs/{id}` | guarded | Status, and the full payload when `done` |
+| `POST` | `/api/scan/batch` | guarded | `{ "urls": [...], "timeout"? }` (cap 25; one rate-limit slot per URL) |
+| `GET` | `/api/scan/batch/{id}` | guarded | Per-URL status plus a rollup |
 | `POST` | `/api/chat` | guarded | Scan already returned. Optional `X-Groq-Api-Key`. |
 | `GET` | `/api/scans` | guarded | `limit` (1–200, default 50), `offset` |
+| `GET` | `/api/scans/{id}` | guarded | Full stored payload (`to_full_dict`) |
 | `GET` | `/api/stats` | guarded | `days` (7 / 30 / 90) |
 | `GET` | `/api/agent` | public | Whether chat needs a visitor Groq key |
 | `GET` | `/api/model` | public | Feature lists, holdout + live metrics, thresholds |
@@ -96,4 +101,4 @@ Guarded routes require `X-API-Key` when `SPHINX_API_KEY` is set. When it is unse
 | `GET` | `/api/health` | public | Liveness only. Never touches the model or DB |
 | `GET` | `/api/ready` | public | Readiness: model artifact loaded, DB answers, UI built |
 
-`/` and client-side routes (`/history`, `/stats`, `/findings`) serve the built React app. OpenAPI is at `/docs`.
+`/` and client-side routes (`/batch`, `/history`, `/stats`, `/findings`) serve the built React app. OpenAPI is at `/docs`.

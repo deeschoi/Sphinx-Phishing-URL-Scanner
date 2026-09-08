@@ -55,6 +55,55 @@ def cmd_train(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _shap_bar(contribution: float, width: int = 10) -> str:
+    filled = int(round(min(abs(contribution), 3.0) / 3.0 * width))
+    return ("█" * filled).ljust(width, "░")
+
+
+def render_scan(payload: dict) -> str:
+    """One-screen human summary of a scan payload."""
+    verdict = str(payload.get("verdict") or "unknown")
+    probability = float(payload.get("probability") or 0.0)
+    lines = [
+        f"{verdict}  p={probability:.3f}",
+        str(payload.get("model") or ""),
+    ]
+    rationale = str(payload.get("rationale") or "").strip()
+    if rationale:
+        lines.append("")
+        lines.append(rationale)
+    signals = list(payload.get("signals") or [])[:5]
+    if signals:
+        lines.append("")
+        lines.append("Top signals")
+        for signal in signals:
+            label = str(signal.get("label") or signal.get("feature") or "")
+            contrib = float(signal.get("contribution") or 0.0)
+            sign = "+" if contrib >= 0 else ""
+            lines.append(f"  {_shap_bar(contrib)}  {sign}{contrib:.2f}  {label}")
+    notes = [str(note) for note in (payload.get("notes") or []) if note]
+    if notes:
+        lines.append("")
+        lines.append("Notes")
+        for note in notes:
+            lines.append(f"  • {note}")
+    coverage = payload.get("coverage") or {}
+    lines.append("")
+    lines.append("Coverage")
+    lines.append(f"  reachability: {coverage.get('reachability') or '—'}")
+    lines.append(f"  page fetched: {'yes' if coverage.get('page_fetched') else 'no'}")
+    hops = coverage.get("redirect_hops") or []
+    n_hops = coverage.get("redirects") or len(hops)
+    lines.append(f"  redirects: {n_hops}")
+    for hop in hops:
+        mark = " (shortener)" if hop.get("shortener") else ""
+        lines.append(f"    {hop.get('url')}{mark}")
+    host_unicode = payload.get("host_unicode")
+    if host_unicode:
+        lines.append(f"  unicode host: {host_unicode}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def cmd_scan(args: argparse.Namespace) -> int:
     from phishing.scanner import UnsafeTargetError, scan
 
@@ -66,7 +115,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
     except (ValueError, FileNotFoundError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    print(json.dumps(payload, indent=2, default=str))
+    if args.json:
+        print(json.dumps(payload, indent=2, default=str))
+    else:
+        print(render_scan(payload), end="")
     return 0
 
 
@@ -159,6 +211,7 @@ def build_parser() -> argparse.ArgumentParser:
     sc = sub.add_parser("scan", help="extract features and score a URL")
     sc.add_argument("url")
     sc.add_argument("--tier", choices=["A", "B", "full"], default="full")
+    sc.add_argument("--json", action="store_true", help="print the full payload")
     sc.set_defaults(func=cmd_scan)
 
     va = sub.add_parser("validate", help="Tier-A drift vs 2012 legitimate class")

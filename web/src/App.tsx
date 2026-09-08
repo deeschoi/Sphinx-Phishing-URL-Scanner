@@ -7,6 +7,9 @@ import { Scanner } from "./views/Scanner";
 const History = lazy(() =>
   import("./views/History").then((module) => ({ default: module.History })),
 );
+const Batch = lazy(() =>
+  import("./views/Batch").then((module) => ({ default: module.Batch })),
+);
 const Stats = lazy(() =>
   import("./views/Stats").then((module) => ({ default: module.Stats })),
 );
@@ -21,6 +24,7 @@ export default function App() {
         <Suspense fallback={<p className="status">Loading…</p>}>
           <Routes>
             <Route path="/" element={<Scanner />} />
+            <Route path="/batch" element={<Batch />} />
             <Route path="/history" element={<History />} />
             <Route path="/stats" element={<Stats />} />
             <Route path="/findings" element={<FindingsView />} />

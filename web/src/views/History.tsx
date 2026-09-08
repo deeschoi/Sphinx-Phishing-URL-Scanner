@@ -100,6 +100,14 @@ export function History() {
                       <button
                         type="button"
                         className="row-link"
+                        onClick={() => navigate(`/?scan=${row.id}`)}
+                      >
+                        Open
+                      </button>
+                      {" · "}
+                      <button
+                        type="button"
+                        className="row-link"
                         onClick={() =>
                           navigate(`/?url=${encodeURIComponent(row.url)}`)
                         }

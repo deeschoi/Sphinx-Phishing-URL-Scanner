@@ -171,6 +171,7 @@ def test_anonymous_non_loopback_is_refused_on_guarded_routes(client, monkeypatch
     with make_client(app, host="203.0.113.7") as remote:
         bodies = {
             "/api/scan": {"url": "https://example.com"},
+            "/api/scan/jobs": {"url": "https://example.com"},
             "/api/chat": {
                 "scan": {"url": "https://example.com"},
                 "messages": [{"role": "user", "content": "why?"}],
@@ -180,6 +181,7 @@ def test_anonymous_non_loopback_is_refused_on_guarded_routes(client, monkeypatch
             ("get", "/api/scans"),
             ("get", "/api/stats"),
             ("post", "/api/scan"),
+            ("post", "/api/scan/jobs"),
             ("post", "/api/chat"),
         ):
             response = remote.request(method, path, json=bodies.get(path))

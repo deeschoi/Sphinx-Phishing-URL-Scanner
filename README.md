@@ -12,24 +12,27 @@ How a scan is extracted, what the numbers mean, and live vs holdout results: **[
 
 A scan is not a blocklist lookup. Sphinx measures the URL string and, when it can, the HTML of the landing page, then scores those 48 features with XGBoost. Private and metadata addresses are refused before a socket is opened. The page model is used when HTML was measured; a URL-only fallback is used when it was not. SHAP bars explain whichever number is on screen.
 
-The web app has four sections:
+The web app has five sections:
 
 | Section | What it is for |
 |---|---|
-| **Scanner** | Paste a URL (or use the example chips). Returns a verdict, probability, SHAP contributors, and scan coverage. History's **Scan again** lands here with `?url=` and actually runs. Optional analyst chat splits **Findings** (measured evidence) from **Commentary**. |
+| **Scanner** | Paste a URL (or use the example chips). Returns a verdict, probability, SHAP contributors, and scan coverage. History's **Open** hydrates the stored payload via `?scan=`; **Scan again** lands here with `?url=` and actually runs. Optional analyst chat splits **Findings** (measured evidence) from **Commentary**. |
+| **Batch** | Paste up to 25 URLs. Each is queued as its own job; export the finished rows as CSV or JSON. |
 | **History** | Recent scans logged by the API, paginated 50 at a time. Credentials and token-shaped path segments are stripped before storage. |
-| **Stats** | Verdict mix and daily mean score over 7 / 30 / 90 days, for spotting drift. Unreachable hosts are excluded from the mean. |
+| **Stats** | Verdict mix, URL-only vs page share, disagreement-rule rate, and daily mean score over 7 / 30 / 90 days. Unreachable hosts are excluded from the mean. |
 | **Research findings** | Headline tables from the 2012 UCI analysis that started this project (leakage, encoding, decay). Nothing on that page is used to score a URL. |
 
 Chat is an explanation layer over a scan that already happened. Scans never need Groq. If the server has no `GROQ_API_KEY`, the panel asks for a visitor key.
 
-There is also a CLI (`phishing scan`) and an HTTP API (`POST /api/scan`, OpenAPI at `/docs`). Route table and payload fields: [docs/parameters.md](docs/parameters.md).
+There is also a CLI (`phishing scan`) and an HTTP API (`POST /api/scan`, `POST /api/scan/jobs`, `POST /api/scan/batch`, OpenAPI at `/docs`). Route table and payload fields: [docs/parameters.md](docs/parameters.md).
 
 ## Public demo (Render)
 
 Sphinx is a long-running app, not a static site: GitHub Pages and Read the Docs cannot run `/api/scan`. A README “try it” link needs the Docker image on a host that keeps `uvicorn` up (Render, Fly, Cloud Run, a VPS). The intended public setup is a **Render Docker web service**, **Free** instance, **ephemeral SQLite**, **no `GROQ_API_KEY`**.
 
-Visitors scan anonymously. Chat is bring-your-own-key so Groq bills them, not the operator. Health check **`/api/ready`** (not `/api/health`). First image build trains the model and can take 30–60+ minutes. Free instances sleep after idle; the next click pays a cold start. History and Stats reset when the instance is replaced unless you attach a disk or Postgres later. One instance, no autoscaling: rate limits are process-local.
+Visitors scan anonymously. Chat is bring-your-own-key so Groq bills them, not the operator. Health check **`/api/ready`** (not `/api/health`). First image build trains the model and can take 30–60+ minutes. Free instances sleep after idle; the next click pays a cold start. One instance, no autoscaling: rate limits are process-local.
+
+History, Stats, and the analyst's host-history tool read from the database. On Render Free the default SQLite file lives on the instance disk, so **every replace or spin-down wipes telemetry**. Attach a [Render disk](https://render.com/docs/disks) mounted at `/app/data` (the image writes `data/scans.db` there) or set `PHISHING_DATABASE_URL` to Postgres — compose already supports that via `docker compose --profile postgres up`. Without one of those, the History tab on a public demo is empty after the next deploy.
 
 Dashboard env (never commit secrets):
 
@@ -95,11 +98,12 @@ Compose publishes `127.0.0.1:8000` on the host, but inside the container the pee
 
 ```bash
 phishing scan https://example.com
+phishing scan --json https://example.com     # full payload
 phishing scan --tier A https://example.com   # URL string only, no network fetch
 # equivalent: python run.py scan https://example.com
 ```
 
-`--tier A` is offline. `B` fetches HTML. `full` (default) is what the website uses.
+`--tier A` is offline. `B` fetches HTML. `full` (default) is what the website uses. The default CLI output is a one-screen summary; `--json` is the previous dump.
 
 ### Configuration
 
@@ -110,7 +114,9 @@ phishing scan --tier A https://example.com   # URL string only, no network fetch
 | `SPHINX_API_KEY` | unset | Optional `X-API-Key` on scan/chat/history/stats. A key baked into the UI is not auth |
 | `SPHINX_ALLOW_ANONYMOUS` | `loopback` (Render: `1` if unset) | Who may call those routes with no key: `loopback`, `private`, `1`/`all`, `0`/`never` |
 | `GROQ_API_KEY` | unset | Optional operator fallback. Omit on a public host; visitors can still send `X-Groq-Api-Key` |
-| `PHISHING_DATABASE_URL` | SQLite under `data/` | Scan telemetry. Point at Postgres for compose `--profile postgres` |
+| `PHISHING_DATABASE_URL` | SQLite under `data/` | Scan telemetry. Point at Postgres for compose `--profile postgres`, or attach a Render disk at `/app/data` so History survives replaces |
+| `SPHINX_JOB_WORKERS` | same as `SPHINX_SCAN_MAX_CONCURRENT` | In-flight async scan jobs |
+| `SPHINX_BATCH_MAX_URLS` | `25` | Cap on `POST /api/scan/batch` |
 | `SPHINX_TRUST_PROXY_HEADERS` | `0` | Honour `X-Forwarded-For` only behind a proxy you control |
 
 `POST /api/scan` fetches a caller-chosen URL. Keep the rate limits, bind behind a reverse proxy (compose already binds `127.0.0.1:8000`), leave `SPHINX_ALLOW_ANONYMOUS` at its `loopback` default unless the service is intentionally public, and omit `GROQ_API_KEY` on public hosts.

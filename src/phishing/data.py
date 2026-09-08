@@ -190,6 +190,91 @@ def load_phiusiil_raw(path: Path | None = None) -> pd.DataFrame:
     return df
 
 
+def fit_tld_legit_prob(
+    tlds: pd.Series | list[str],
+    y_phishing: pd.Series | np.ndarray,
+    *,
+    k: int | None = None,
+) -> dict[str, float]:
+    """Bayesian-shrunk P(legitimate | TLD) toward the global legitimate rate.
+
+    The CSV's ``TLDLegitimateProb`` is P(TLD | legit) — a volume share that
+    makes every low-volume TLD look like phishing (``.uk`` is 95% legitimate
+    and scored 0.029 because it is rare among legit rows; ``.com`` is 61%
+    legitimate and scored 0.52 because it is half the legit class). This is
+    P(legit | TLD) shrunk toward the global base rate so rare TLDs do not pin
+    at 0 or 1.
+    """
+    from phishing.config import TLD_PRIOR_PSEUDOCOUNT
+
+    if k is None:
+        k = TLD_PRIOR_PSEUDOCOUNT
+    y = np.asarray(y_phishing)
+    legit = (y == 0).astype(float)
+    base = float(legit.mean()) if len(legit) else 0.5
+    frame = pd.DataFrame({"tld": [str(t) for t in tlds], "legit": legit})
+    grouped = frame.groupby("tld", sort=False)["legit"].agg(["sum", "count"])
+    return {
+        str(tld): float((row["sum"] + k * base) / (row["count"] + k))
+        for tld, row in grouped.iterrows()
+    }
+
+
+def apply_tld_prior(
+    url_df: pd.DataFrame,
+    tlds: pd.Series,
+    tld_prob: dict[str, float],
+) -> pd.DataFrame:
+    """Overwrite ``TLDLegitimateProb`` from a fitted prior without re-extracting."""
+    out = url_df.copy()
+    default = (
+        float(sum(tld_prob.values()) / len(tld_prob)) if tld_prob else 0.0
+    )
+    mapped = pd.Series(tlds, index=out.index).astype(str).map(tld_prob)
+    out["TLDLegitimateProb"] = mapped.fillna(default).astype(float)
+    return out
+
+
+def load_phiusiil_parts(
+    path: Path | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, np.ndarray, pd.Series]:
+    """URL-feature frame (TLD prior unset), HTML columns, y, host groups, TLDs.
+
+    URL columns are extracted once with an empty TLD prior so ``train`` can
+    fit the prior on the training split and stamp it on both splits without
+    a second full extraction.
+    """
+    from phishing.config import (
+        PHIUSIIL_HTML_FEATURES,
+        PHIUSIIL_URL_FEATURES,
+        TARGET_COLUMN,
+    )
+    from phishing.features.phiusiil_url import extract_phiusiil_url_features
+
+    raw = load_phiusiil_raw(path)
+    missing_html = [c for c in PHIUSIIL_HTML_FEATURES if c not in raw.columns]
+    if missing_html:
+        raise ValueError(f"PhiUSIIL dataset is missing expected columns: {missing_html}")
+
+    y = (raw["label"] == 0).astype(int)
+    y.name = TARGET_COLUMN
+    groups = raw["URL"].map(_phiusiil_host).fillna("").to_numpy()
+    codes, _ = pd.factorize(pd.Series(groups), sort=True)
+    if "TLD" in raw.columns:
+        tlds = raw["TLD"].astype(str)
+    else:
+        tlds = raw["URL"].map(_phiusiil_host).map(
+            lambda h: h.rsplit(".", 1)[-1] if "." in h else ""
+        )
+        tlds = tlds.astype(str)
+    url_rows = [
+        extract_phiusiil_url_features(url, tld_prob={}) for url in raw["URL"].tolist()
+    ]
+    url_df = pd.DataFrame(url_rows, index=raw.index)[PHIUSIIL_URL_FEATURES]
+    html_df = raw[PHIUSIIL_HTML_FEATURES].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    return url_df, html_df, y, codes.astype(np.int64), tlds
+
+
 def load_phiusiil_xy(
     path: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.Series, np.ndarray, dict[str, float]]:
@@ -204,35 +289,15 @@ def load_phiusiil_xy(
     trailing slash or ``/en-us`` cannot impersonate the phishing class.
 
     Recodes the target so 1 = phishing. Groups by hostname.
+
+    ``TLDLegitimateProb`` is a Bayesian-shrunk P(legit | TLD) fit on this
+    frame. Training fits it on the train split only via ``load_phiusiil_parts``
+    so holdout metrics do not leak labels.
     """
-    from phishing.config import (
-        PHIUSIIL_HTML_FEATURES,
-        PHIUSIIL_MODEL_FEATURES,
-        PHIUSIIL_URL_FEATURES,
-    )
-    from phishing.features.phiusiil_url import extract_phiusiil_url_features
+    from phishing.config import PHIUSIIL_MODEL_FEATURES
 
-    raw = load_phiusiil_raw(path)
-    missing_html = [c for c in PHIUSIIL_HTML_FEATURES if c not in raw.columns]
-    if missing_html:
-        raise ValueError(f"PhiUSIIL dataset is missing expected columns: {missing_html}")
-
-    tld_prob = (
-        raw.groupby("TLD")["TLDLegitimateProb"].first().astype(float).to_dict()
-        if "TLD" in raw.columns
-        else {}
-    )
-    tld_prob = {str(k): float(v) for k, v in tld_prob.items()}
-
-    y = (raw["label"] == 0).astype(int)
-    y.name = TARGET_COLUMN
-
-    url_rows = [
-        extract_phiusiil_url_features(url, tld_prob=tld_prob) for url in raw["URL"].tolist()
-    ]
-    url_df = pd.DataFrame(url_rows, index=raw.index)[PHIUSIIL_URL_FEATURES]
-    html_df = raw[PHIUSIIL_HTML_FEATURES].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    url_df, html_df, y, groups, tlds = load_phiusiil_parts(path)
+    tld_prob = fit_tld_legit_prob(tlds, y)
+    url_df = apply_tld_prior(url_df, tlds, tld_prob)
     X = pd.concat([url_df, html_df], axis=1)[PHIUSIIL_MODEL_FEATURES]
-    groups = raw["URL"].map(_phiusiil_host).fillna("").to_numpy()
-    codes, _ = pd.factorize(pd.Series(groups), sort=True)
-    return X, y, codes.astype(np.int64), tld_prob
+    return X, y, groups, tld_prob

@@ -61,8 +61,22 @@ def test_api_module_imports():
     routes = {getattr(route, "path", None) for route in app.routes}
     assert "/" in routes
     assert "/api/scan" in routes
+    assert "/api/scan/jobs" in routes
+    assert "/api/scan/batch" in routes
+    assert "/api/scans/{scan_id}" in routes
     assert "/api/findings" in routes
     assert "/api/health" in routes
+
+
+def test_unicode_host_and_shortener_hops():
+    from phishing.scanner import _redirect_hops, _unicode_host
+
+    assert _unicode_host("https://example.com") is None
+    decoded = _unicode_host("https://xn--e1afmkfd.xn--p1ai/")
+    assert decoded == "пример.рф"
+    hops = _redirect_hops(["https://bit.ly/abc", "https://phish.example/login"])
+    assert hops[0]["shortener"] is True
+    assert hops[1]["shortener"] is False
 
 
 def _fake_model(probability: float = 0.003):

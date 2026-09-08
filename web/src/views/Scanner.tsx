@@ -1,10 +1,11 @@
 import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { scanUrl } from "../api";
+import { createScanJob, fetchScan, fetchScanJob } from "../api";
 import { Analyst } from "../components/Analyst";
 import { Gauge } from "../components/Gauge";
 import { StatusMessage } from "../components/EmptyState";
 import { VerdictBadge } from "../components/VerdictBadge";
+import { downloadJson } from "../export";
 import { formatProbability, pct, yesNo } from "../format";
 import { WITHHELD_VERDICTS, urlPatternClass, urlPatternLabel } from "../verdict";
 import type { ScanResult, Signal } from "../types";
@@ -41,12 +42,33 @@ export function Scanner() {
     const id = ++requestId.current;
     setBusy(true);
     setError(false);
-    setStatus("Fetching the page and parsing its HTML…");
+    setStatus("Queued…");
     try {
-      const payload = await scanUrl(trimmed);
+      const { job_id } = await createScanJob(trimmed);
       if (id !== requestId.current) return;
-      setResult(payload);
-      setStatus(null);
+      let polls = 0;
+      while (id === requestId.current) {
+        const job = await fetchScanJob(job_id);
+        if (id !== requestId.current) return;
+        if (job.status === "queued") {
+          setStatus("Queued…");
+        } else if (job.status === "running") {
+          setStatus(
+            polls < 2
+              ? "Fetching the page and parsing its HTML…"
+              : "Scoring…",
+          );
+        } else if (job.status === "done") {
+          if (!job.result) throw new Error("Scan finished without a payload.");
+          setResult(job.result);
+          setStatus(null);
+          return;
+        } else if (job.status === "error") {
+          throw new Error(job.error || "Scan failed.");
+        }
+        polls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
     } catch (err) {
       if (id !== requestId.current) return;
       setError(true);
@@ -58,9 +80,35 @@ export function Scanner() {
     }
   }
 
-  // History's "Scan again" navigates here with ?url=. Prefilling the box alone
-  // made that button a lie, so the scan actually runs — once per URL.
+  async function hydrateScan(scanId: string) {
+    const id = ++requestId.current;
+    setBusy(true);
+    setError(false);
+    setStatus("Loading stored scan…");
+    try {
+      const payload = await fetchScan(scanId);
+      if (id !== requestId.current) return;
+      if (payload.url) setUrl(payload.url);
+      setResult(payload);
+      setStatus(null);
+    } catch (err) {
+      if (id !== requestId.current) return;
+      setError(true);
+      setStatus(err instanceof Error ? err.message : "Could not load that scan.");
+    } finally {
+      if (id === requestId.current) setBusy(false);
+    }
+  }
+
+  // History deep-links here with ?scan=<id> to rehydrate, or ?url= to rescan.
   useEffect(() => {
+    const scanId = params.get("scan");
+    if (scanId) {
+      if (autoScanned.current === `scan:${scanId}`) return;
+      autoScanned.current = `scan:${scanId}`;
+      void hydrateScan(scanId);
+      return;
+    }
     const preset = params.get("url");
     if (!preset) return;
     setUrl(preset);
@@ -166,6 +214,11 @@ function ScanResultView({ result }: { result: ScanResult }) {
             </span>
           ) : null}
           <h2 className="verdict-url">{result.final_url}</h2>
+          {result.host_unicode ? (
+            <p className="host-unicode">
+              Unicode host: {result.host_unicode}
+            </p>
+          ) : null}
           {redirected ? (
             <p className="verdict-redirect">
               Redirected from <span className="clip">{result.url}</span>
@@ -212,6 +265,21 @@ function ScanResultView({ result }: { result: ScanResult }) {
               value={coverage.http_status ? String(coverage.http_status) : "—"}
             />
             <Meta term="Redirects followed" value={String(coverage.redirects ?? 0)} />
+            {(coverage.redirect_hops?.length ?? 0) > 0 ? (
+              <div className="hop-block">
+                <dt>Hop list</dt>
+                <dd>
+                  <ol className="hop-list">
+                    {coverage.redirect_hops!.map((hop) => (
+                      <li key={hop.url}>
+                        {hop.url}
+                        {hop.shortener ? " (shortener)" : ""}
+                      </li>
+                    ))}
+                  </ol>
+                </dd>
+              </div>
+            ) : null}
             {/* Not "certificate inspected": no handshake is made and no
                 certificate is parsed. This is the scheme of the landing page. */}
             <Meta term="Served over HTTPS" value={yesNo(coverage.https)} />
@@ -256,6 +324,17 @@ function ScanResultView({ result }: { result: ScanResult }) {
       </div>
 
       <Analyst result={result} />
+      <div className="result-actions">
+        <button
+          type="button"
+          className="ghost-button"
+          onClick={() =>
+            downloadJson(`sphinx-scan-${result.scan_id ?? "latest"}.json`, result)
+          }
+        >
+          Export JSON
+        </button>
+      </div>
     </article>
   );
 }
@@ -281,7 +360,9 @@ function DualScores({ result }: { result: ScanResult }) {
       </div>
       <p className="dual-note">
         {result.url_disagreement
-          ? "The two models disagreed. The URL-string score is the one shown above, because the page model's heaviest features are the ones that drifted since the 2023 training crawl."
+          ? page != null && urlScore != null && page < urlScore
+            ? "The two models disagreed. The URL-string score is the one shown above: the page looks like a rich legitimate site, but the host sits on shared free hosting, where platform HTML looks rich by construction."
+            : "The two models disagreed. The URL-string score is the one shown above, because the page model's heaviest features are the ones that drifted since the 2023 training crawl."
           : "The two models differ on this page. The score above is the page model's; the URL-string score is what the model would say without downloading anything."}
       </p>
     </div>

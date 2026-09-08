@@ -71,6 +71,10 @@ def test_stats_counts_verdicts(db):
     assert stats["total_scans"] == 2
     assert stats["verdicts"] == {"suspicious": 1, "phishing": 1}
     assert stats["daily"][0]["scans"] == 2
+    assert stats["page"] == 2
+    assert stats["url_only"] == 0
+    assert stats["disagreement"] == 0
+    assert stats["withheld"] == 0
 
 
 def test_stats_mean_probability_ignores_unreachable(db):
@@ -85,6 +89,24 @@ def test_stats_mean_probability_ignores_unreachable(db):
     assert stats["verdicts"]["suspicious"] == 1
     assert stats["daily"][0]["scans"] == 2
     assert stats["daily"][0]["mean_probability"] == pytest.approx(0.62)
+    assert stats["withheld"] == 1
+
+
+def test_stats_splits_url_only_and_disagreement(db):
+    page = sample_result("https://page.example/")
+    page["model"] = "XGBoost"
+    db.record_scan(page)
+    url_only = sample_result("https://url.example/")
+    url_only["model"] = "XGBoost (URL-only)"
+    db.record_scan(url_only)
+    disagree = sample_result("https://kit.web.app/")
+    disagree["model"] = "XGBoost (URL disagreement)"
+    db.record_scan(disagree)
+
+    stats = db.scan_stats()
+    assert stats["page"] == 1
+    assert stats["url_only"] == 1
+    assert stats["disagreement"] == 1
 
 
 def test_record_scan_never_raises(db, monkeypatch):
@@ -117,6 +139,10 @@ def test_scans_and_stats_endpoints(db, monkeypatch):
         assert stats.json()["total_scans"] == 1
 
         assert client.get("/api/health").json() == {"status": "ok"}
+
+        detail = client.get(f"/api/scans/{listed.json()['scans'][0]['id']}")
+        assert detail.status_code == 200
+        assert detail.json()["verdict"] == "suspicious"
 
 
 def test_numeric_otp_in_the_path_is_redacted(db):

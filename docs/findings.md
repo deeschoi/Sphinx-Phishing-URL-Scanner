@@ -6,7 +6,7 @@ This is the evaluation write-up: live vs holdout numbers, what was tried and rej
 
 The served estimator is **XGBoost** trained on [PhiUSIIL](https://archive.ics.uci.edu/dataset/967/phiusiil+phishing+url+dataset) (Prasad & Chandra, 2023): 235,795 rows, 48 features, 42.8% phishing. Evaluation is a **host-grouped holdout** — no hostname is shared between train and test.
 
-The model card reports **99.95% accuracy** on that holdout. That number is measured on the **frozen 2023 CSV columns**. It is an upper bound, not a deployment estimate. The UI reports both this figure and the live-sample figure on every scan.
+The model card reports **99.92% accuracy** on that holdout. That number is measured on the **frozen 2023 CSV columns**. It is an upper bound, not a deployment estimate. The UI reports both this figure and the live-sample figure on every scan.
 
 `scripts/07_live_sample_eval.py` re-extracts every feature over the network, which is what Sphinx actually does:
 
@@ -16,14 +16,16 @@ PYTHONPATH=src python scripts/07_live_sample_eval.py --seed 7 --n-per-class 120
 
 Held-out sample, seed 7, 120 unique hosts per class (tuning was done on seed 42):
 
-| | Baseline | After disagreement + URL-pattern chip |
+| | After URL disagreement (Aug 2026) | After mirror rule + TLD prior |
 |---|---|---|
-| Accuracy | 0.878 | **0.906** |
-| Recall | 0.781 | 0.750 |
-| False-positive rate | 0.068 | **0.009** |
-| Precision | 0.862 | **0.980** |
+| Accuracy | 0.906 | **0.967** |
+| Recall | 0.750 | **0.906** |
+| False-positive rate | 0.009 | **0.000** |
+| Precision | 0.980 | **1.000** |
 
-Of 240 hosts, 59 no longer resolve (56 of them phishing). That churn, not the model, is the main limit on live recall. Of those 59 unrated hosts, the eval dump still records 54 as phishing-shaped on the URL string. The remaining handful used to receive a `legitimate` string chip; current Sphinx withholds that chip, because a clean-looking origin is not evidence that a dead host is safe.
+Of 240 hosts, 58 no longer resolve (54 of them phishing). That churn, not the model, is the main limit on live recall. Of those 58 unrated hosts, the eval dump still records 53 as phishing-shaped on the URL string. The remaining handful used to receive a `legitimate` string chip; current Sphinx withholds that chip, because a clean-looking origin is not evidence that a dead host is safe.
+
+The six remaining misses are kits parked on compromised real domains (the page was not a free-hosting suffix, so the mirror rule correctly stays off) or fetches that fell back to URL-only. A path-only auxiliary signal is out of scope here. Seed 42, same size, reads 96.1% accuracy / 90.3% recall / 0.8% FPR, so the seed-7 card is not a one-draw fluke.
 
 ## What was measured and rejected
 
@@ -33,7 +35,7 @@ Three plausible changes made things worse and were backed out; the reasoning is 
 - *Counting subdomain depth against the platform suffix.* Cost 4.7 points of recall: it also lowers every kit parked on those same suffixes, which is the larger population.
 - *Widening the JS-shell heuristic and imputing all HTML features.* Cost 5.1 and 10.3 points of recall respectively. A phishing kit is also a thin page behind a few scripts, and `HasPasswordField` / `Bank` / `Pay` are genuinely measured on a kit's login page.
 
-A separate leak survives: `TLDLegitimateProb` is 0.013 for `.io` and 0.0015 for `.app`, so real sites on those TLDs score 0.83–0.95 on the URL string alone. `tests/test_phiusiil.py` pins that behaviour so a future fix has a failing test to flip.
+A separate encoding bug in the CSV has been replaced: `TLDLegitimateProb` was P(TLD | legit) — a volume share that made `.uk` (95% legitimate) look like phishing and `.com` look safe because it is half the legit class. Training now stores a Bayesian-shrunk P(legit | TLD) fit on the training split only. `tests/test_phiusiil.py` pins that `.io` / `.app` are no longer near-zero and that `docs.github.io` / `nextjs.vercel.app` do not pin at *p* ≈ 0.99 from the prior alone.
 
 ## Why this project exists (2012 → 2023)
 
@@ -47,10 +49,10 @@ The **Research findings** tab still surfaces the 2012 leakage, encoding-audit, a
 
 ## Limitations
 
-- Training pages are **2023 crawls**. Live 2026 HTML (minified homepages, JS shells) is a shifted distribution. Treat the 99.95% grouped-holdout figure as an upper bound; live re-extraction reads **90.6% accuracy / 75.0% recall / 0.9% FPR**.
+- Training pages are **2023 crawls**. Live 2026 HTML (minified homepages, JS shells) is a shifted distribution. Treat the 99.92% grouped-holdout figure as an upper bound; live re-extraction reads **96.7% accuracy / 90.6% recall / 0.0% FPR**.
 - Roughly a quarter of PhiUSIIL phishing hosts no longer resolve, so live recall is measured on a shrinking and non-random subset of the phishing class.
 - Page fetches do not execute JavaScript. SPA shells are imputed for a handful of link-count features; password / bank / pay markers are left as measured.
-- `TLDLegitimateProb` near zero for `.app` / `.io` inflates URL-only scores on real sites that use those TLDs.
+- `TLDLegitimateProb` is now a shrunk P(legit|TLD), not the CSV's volume share. Rare reputable TLDs no longer look identical to phishing TLDs.
 - Free-hosting suffixes are a routing hint, not a feature, because they almost perfectly separate the PhiUSIIL classes.
 - Grouped holdout is still i.i.d. across hosts, not across time. There is no temporal holdout.
 - The served model is **not calibrated**. Holdout Brier is 0.0004 on frozen columns, but live false positives pin at *p* ≈ 1.0 and platform-hosted kits at *p* ≈ 0. Read the gauge as a score, not as a frequency.

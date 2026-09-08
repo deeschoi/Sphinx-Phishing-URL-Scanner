@@ -447,6 +447,10 @@ def test_free_hosting_platform_feature_marks_shared_hosts():
     assert is_free_hosting_platform("https://kit.firebaseapp.com/login") == 1
     assert is_free_hosting_platform("https://mysite.wixsite.com/home") == 1
     assert is_free_hosting_platform("https://vercel.app") == 1
+    assert is_free_hosting_platform("https://cnfrm1220221.start.page/") == 1
+    assert is_free_hosting_platform(
+        "https://tumuniencasadeclaracionjuradabienesinmuebles.webnode.page/"
+    ) == 1
     assert is_free_hosting_platform("https://github.com/") == 0
     assert is_free_hosting_platform("https://www.visa.com/en-us") == 0
     assert platform_suffix("abc.vercel.app") == "vercel.app"
@@ -493,15 +497,12 @@ def test_kit_shaped_path_is_a_routing_hint_not_a_model_input():
 
 
 def test_platform_hosts_still_carry_the_tld_prior_leak():
-    """Documents a *separate* leak that removing IsFreeHostingPlatform does not fix.
+    """``.io`` / ``.app`` still have a low legitimacy prior, just not near-zero.
 
-    PhiUSIIL has almost no legitimate ``.io`` / ``.app`` rows, so
-    TLDLegitimateProb is 0.013 and 0.0015 for those TLDs. The URL-only model
-    therefore still scores real docs sites and app deployments at p ≈ 0.83–0.95
-    on the URL string alone. This is a property of the training table, not of
-    the platform feature, and it is why the scanner must not publish a
-    URL-string judgment as a live-site verdict. Locked in so a future TLD-prior
-    fix has a failing test to flip.
+    After switching TLDLegitimateProb from P(TLD|legit) to a shrunk
+    P(legit|TLD), real docs sites on those TLDs should no longer pin at
+    0.83–0.95 from the prior alone. Locked so a regression that restores the
+    volume-share encoding fails here.
     """
     from phishing.tuning import load_payload
 
@@ -515,12 +516,29 @@ def test_platform_hosts_still_carry_the_tld_prior_leak():
         pytest.skip("served model is not PhiUSIIL URL-only")
 
     tld_prob = artifact.extra.get("tld_legit_prob") or {}
+    # The old encoding stored ~0.013 / ~0.0015. The shrunk rate for .io is
+    # around 0.10; .app around 0.03–0.05. Either way it must not be the
+    # volume share.
+    if "io" in tld_prob:
+        assert tld_prob["io"] > 0.05
+    if "app" in tld_prob:
+        assert tld_prob["app"] > 0.02
+
     feature_names = list(artifact.extra.get("url_features") or PHIUSIIL_URL_FEATURES)
-    for url in ("https://docs.github.io", "https://nextjs.vercel.app"):
+
+    def _url_p(url: str) -> float:
         feats = extract_phiusiil_url_features(url, tld_prob=tld_prob)
         row = pd.DataFrame([{name: feats[name] for name in feature_names}])
-        proba = float(url_est.predict_proba(row)[:, 1][0])
-        assert proba > 0.5, f"{url} p={proba:.4f}: TLD-prior leak appears fixed"
+        return float(url_est.predict_proba(row)[:, 1][0])
+
+    # The motivating false positive: a real .io site no longer looks like
+    # phishing just because .io is a low-volume TLD.
+    assert _url_p("https://cloudpathology.io") < 0.5
+    # github.io is a platform host; the prior no longer pins it by itself.
+    assert _url_p("https://docs.github.io") < 0.99
+    # vercel.app is still a free-hosting suffix. The URL-string model can
+    # score it high for that reason; the prior on .app must not be the old
+    # volume share (~0.0015), which is already asserted above.
 
 
 def _kit_shaped_html(title: str = "Sign in") -> str:
@@ -636,6 +654,64 @@ def test_url_disagreement_does_not_excuse_a_free_hosting_kit(monkeypatch):
     assert result["url_disagreement"] is False
     assert result["probability"] == pytest.approx(0.999)
     assert result["verdict"] == "phishing"
+
+
+def test_url_disagreement_does_not_excuse_a_kit_shaped_path(monkeypatch):
+    """A compromised domain serving /link.html is evidence, not 2023-vs-2026 drift.
+
+    The page model scored chefset.com.mx/link.html at 1.0; the origin-only URL
+    model scored 0.123 and the old rule talked it down to a miss.
+    """
+    from phishing.scanner import scan
+
+    try:
+        _stub_payload(monkeypatch, page_p=0.999, url_p=0.02)
+    except FileNotFoundError:
+        pytest.skip("no trained model")
+
+    url = "https://chefset.com.mx/link.html"
+    result = scan(url, tier="B", fetch=_fetch_for(url, _kit_shaped_html()))
+
+    assert result["url_disagreement"] is False
+    assert result["probability"] == pytest.approx(0.999)
+    assert result["verdict"] == "phishing"
+
+
+def test_mirror_disagreement_rescues_a_platform_kit(monkeypatch):
+    """Page model sees rich platform HTML; URL model already knows it is a kit."""
+    from phishing.scanner import scan
+
+    try:
+        _stub_payload(monkeypatch, page_p=0.01, url_p=0.99)
+    except FileNotFoundError:
+        pytest.skip("no trained model")
+
+    url = "https://my-optus-id.web.app/"
+    result = scan(url, tier="B", fetch=_fetch_for(url, _rich_legit_html("Optus")))
+
+    assert result["url_disagreement"] is True
+    assert result["page_probability"] == pytest.approx(0.01)
+    assert result["probability"] == pytest.approx(result["url_probability"])
+    assert result["verdict"] in {"phishing", "suspicious"}
+    assert "URL disagreement" in result["model"]
+    assert any("shared free hosting" in note for note in result["notes"])
+
+
+def test_mirror_disagreement_does_not_talk_up_a_non_platform_host(monkeypatch):
+    """Without the platform hint, a clean page on its own domain stays clean."""
+    from phishing.scanner import scan
+
+    try:
+        _stub_payload(monkeypatch, page_p=0.01, url_p=0.99)
+    except FileNotFoundError:
+        pytest.skip("no trained model")
+
+    url = "https://www.soschildrensvillages.org.uk"
+    result = scan(url, tier="B", fetch=_fetch_for(url, _rich_legit_html("SOS")))
+
+    assert result["url_disagreement"] is False
+    assert result["probability"] == pytest.approx(0.01)
+    assert result["verdict"] not in {"phishing", "suspicious"}
 
 
 def test_unreachable_host_reports_a_url_pattern_risk():

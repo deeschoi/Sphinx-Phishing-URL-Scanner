@@ -35,6 +35,13 @@ export interface Coverage {
   truncated: boolean;
   features_used: number;
   features_in_dataset: number;
+  redirect_hops?: RedirectHop[];
+}
+
+export interface RedirectHop {
+  url: string;
+  host: string;
+  shortener: boolean;
 }
 
 export interface LiveSample {
@@ -82,6 +89,8 @@ export interface ScanResult {
   url: string;
   /** The page that was actually scored. Differs from `url` after a redirect. */
   final_url: string;
+  /** Unicode form of an `xn--` host, when the landing host is punycode. */
+  host_unicode?: string | null;
   redirect_chain?: string[];
   http_status?: number | null;
   reachability: Reachability;
@@ -144,6 +153,31 @@ export interface ScanStats {
   total_scans_all_time: number;
   verdicts: Record<string, number>;
   daily: DailyStat[];
+  url_only?: number;
+  page?: number;
+  disagreement?: number;
+  withheld?: number;
+}
+
+export interface ScanJob {
+  job_id: string;
+  status: "queued" | "running" | "done" | "error" | string;
+  url: string;
+  batch_id?: string | null;
+  scan_id?: number | null;
+  error?: string | null;
+  result?: ScanResult | null;
+}
+
+export interface ScanBatch {
+  batch_id: string;
+  status: string;
+  total: number;
+  queued: number;
+  running: number;
+  done: number;
+  error: number;
+  jobs: ScanJob[];
 }
 
 export interface ChatMessage {

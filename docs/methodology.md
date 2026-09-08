@@ -34,7 +34,10 @@ Every scan is logged so History and Stats work. A logging failure never fails a 
 
 ## Disagreement
 
-The page model's heaviest weights (`NoOfExternalRef` 57%, `LineOfCode` 10%, `NoOfSelfRef` 9%) drifted between the 2023 crawl and 2026 markup, so a rich modern homepage can pin at *p* ≈ 1.0. When the page model says phishing and the URL string looks clean, the URL score wins — except on free-hosting suffixes (`github.io`, `vercel.app`, `firebaseapp.com`, …), where kits look clean by construction.
+The page model's heaviest weights (`NoOfExternalRef` 57%, `LineOfCode` 10%, `NoOfSelfRef` 9%) drifted between the 2023 crawl and 2026 markup, so a rich modern homepage can pin at *p* ≈ 1.0. Reconciliation runs in both directions:
+
+- **Drift.** Page says phishing, URL string looks clean, host is not a free-hosting suffix and the path is not kit-shaped → use the URL score. A kit path on a compromised domain is not talked down.
+- **Mirror.** Page says clean, URL string is at or above the URL block cut, and the host *is* on a free-hosting suffix (`github.io`, `vercel.app`, `start.page`, `webnode.page`, …) → use the URL score. Platform HTML looks rich by construction.
 
 That suffix list is a routing hint, not a model feature. In PhiUSIIL it covers 22,478 phishing rows and 1 legitimate row; trained as an input it scored real docs sites at *p* ≈ 0.999. When the two scores disagree, or differ by 0.2 or more, the Scanner shows both rather than hiding the unused estimator.
 
@@ -64,7 +67,7 @@ Grounding is the tool surface, not a request to be careful. `src/phishing/agent.
 The system prompt is server-side. Client messages are filtered to `user` / `assistant` turns. The `scan` object on `/api/chat` is schema-validated (unknown keys dropped); when a `scan_id` resolves in telemetry, stored `url` / `verdict` / `probability` / `model` override the client. Four things the prompt insists on:
 
 1. **Never clear a site.** A `legitimate` verdict means the model found no phishing signals — not that it is safe to type a password. On the live sample this model misses about a quarter of the phishing pages it can reach.
-2. **Say which accuracy number applies.** ~99.9% is the frozen-column holdout; ~90.6% accuracy / 75% recall is live re-extraction, which is what a real scan gets.
+2. **Say which accuracy number applies.** ~99.9% is the frozen-column holdout; ~96.7% accuracy / 90.6% recall is live re-extraction, which is what a real scan gets.
 3. **Lead with withheld / URL-only scans.** A URL-string score is not a judgment of a live site.
 4. **Volunteer the known blind spots** — the plain-HTTP prior, the `.io`/`.app` TLD prior, and phishing kits on trusted platforms — when they bear on the answer.
 

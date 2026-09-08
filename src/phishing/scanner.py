@@ -22,6 +22,7 @@ from phishing.config import (
 from phishing.features.extractor import url_to_phiusiil_features
 from phishing.features.phiusiil_url import is_free_hosting_platform, is_kit_shaped_path
 from phishing.features.reachability import LiveProbe
+from phishing.features.url_features import SHORTENERS
 from phishing.io import load_json, to_jsonable
 from phishing.netguard import (
     BLOCKED_SCHEMES,
@@ -304,7 +305,39 @@ def _coverage(probe: LiveProbe, n_model_features: int) -> dict[str, Any]:
         "truncated": probe.truncated,
         "features_used": n_model_features,
         "features_in_dataset": len(PHIUSIIL_MODEL_FEATURES),
+        "redirect_hops": _redirect_hops(probe.redirect_chain),
     }
+
+
+def _redirect_hops(chain: list[str]) -> list[dict[str, Any]]:
+    hops: list[dict[str, Any]] = []
+    for url in chain:
+        host = (urlparse(url).hostname or "").lower().rstrip(".")
+        hops.append(
+            {
+                "url": url,
+                "host": host,
+                "shortener": _is_shortener(host),
+            }
+        )
+    return hops
+
+
+def _is_shortener(host: str) -> bool:
+    if not host:
+        return False
+    return host in SHORTENERS or any(host.endswith("." + s) for s in SHORTENERS)
+
+
+def _unicode_host(url: str) -> str | None:
+    host = (urlparse(url).hostname or "")
+    if "xn--" not in host.lower():
+        return None
+    try:
+        decoded = host.encode("ascii").decode("idna")
+    except (UnicodeError, UnicodeDecodeError):
+        return None
+    return decoded if decoded != host else None
 
 
 _PLAIN_NOTES = (
@@ -421,23 +454,45 @@ def scan(
         elif url_pattern_risk in {"legitimate", "probably safe"}:
             url_pattern_risk = None
 
-    # The page model's top weights (NoOfExternalRef 57%, LineOfCode 10%,
-    # NoOfSelfRef 9%) are exactly the columns that moved between the 2023 crawl
-    # and 2026 markup, so a rich modern homepage can pin at p ≈ 1.0. When the
-    # URL string looks clean, that disagreement is drift, not evidence.
+    # Two disagreement directions, both gated so they cannot undo each other.
     #
-    # Gated on the free-hosting hint: a kit on firebaseapp.com has a clean-
-    # looking URL by construction, and must not be talked down this way.
+    # Drift rescue (page high, URL clean): the page model's top weights
+    # (NoOfExternalRef 57%, LineOfCode 10%, NoOfSelfRef 9%) drifted between the
+    # 2023 crawl and 2026 markup, so a rich homepage can pin at p ≈ 1.0.
+    # Excludes free-hosting suffixes (a kit on firebaseapp.com has a clean
+    # origin by construction) and kit-shaped paths (a compromised domain
+    # serving /link.html is evidence, not drift).
+    #
+    # Mirror rescue (page clean, URL phishing, platform host): the page model
+    # scores Firebase/Workers shells as rich legitimate HTML. The URL-string
+    # estimator is not fooled. Requires the platform hint so a real site on
+    # its own domain can never be talked up.
     disagreement = False
+    disagreement_kind: str | None = None
+    platform_host = bool(is_free_hosting_platform(normalised))
     if (
         not use_url_only
         and page_probability is not None
         and url_probability is not None
         and page_probability >= block
         and url_probability < url_warn
-        and not is_free_hosting_platform(normalised)
+        and not platform_host
+        and not kit_path
     ):
         disagreement = True
+        disagreement_kind = "drift"
+        probability = url_probability
+        model_label = f"{artifact.model_name} (URL disagreement)"
+    elif (
+        not use_url_only
+        and page_probability is not None
+        and url_probability is not None
+        and page_probability < warn
+        and url_probability >= url_block
+        and platform_host
+    ):
+        disagreement = True
+        disagreement_kind = "platform"
         probability = url_probability
         model_label = f"{artifact.model_name} (URL disagreement)"
 
@@ -472,12 +527,20 @@ def scan(
     notes = _notes(warnings)
     if shap_error:
         notes.insert(0, shap_error)
-    if disagreement:
+    if disagreement_kind == "drift":
         notes.insert(
             0,
             "The page-content model scored this as phishing, but the URL string "
             "on its own looks clean. That pattern is usually 2023-vs-2026 drift "
             "in the page-richness features rather than evidence, so the score "
+            "shown is the URL-string score.",
+        )
+    elif disagreement_kind == "platform":
+        notes.insert(
+            0,
+            "The page-content model scored this as legitimate, but the URL "
+            "string looks like phishing and the host sits on shared free "
+            "hosting. Platform HTML looks rich by construction, so the score "
             "shown is the URL-string score.",
         )
     if withheld and kit_path:
@@ -528,6 +591,7 @@ def scan(
     payload_out = {
         "url": normalised,
         "final_url": final_url,
+        "host_unicode": _unicode_host(final_url),
         "redirect_chain": list(probe.redirect_chain),
         "http_status": probe.status_code,
         "reachability": probe.to_dict(),
@@ -548,7 +612,7 @@ def scan(
         # Two different measurements, labelled as such. The holdout numbers are
         # the frozen 2023 CSV columns; the live-sample numbers are the same
         # model re-extracting features over the network, which is what a user
-        # of this scanner actually gets. Showing only the first read as 99.95%
+        # of this scanner actually gets. Showing only the first read as 99.9%
         # accuracy on live 2026 pages, which is not true.
         "model_quality": {
             "accuracy": float(metrics.get("accuracy", 0.0)),

@@ -14,6 +14,7 @@ import hashlib
 import math
 import os
 import re
+import uuid
 from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -114,6 +115,40 @@ class Scan(Base):
             out.setdefault("duration_ms", self.duration_ms)
             return out
         return self.to_dict()
+
+
+class ScanJob(Base):
+    """An async scan: queued, running, done, or error.
+
+    ``batch_id`` groups the jobs created by one ``POST /api/scan/batch``.
+    ``scan_id`` points at the ``scans`` row once the worker finishes.
+    """
+
+    __tablename__ = "scan_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    url: Mapped[str] = mapped_column(Text)
+    batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    scan_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    client_key: Mapped[str] = mapped_column(String(64), default="")
+    timeout: Mapped[int] = mapped_column(Integer, default=8)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "job_id": self.id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "status": self.status,
+            "url": self.url,
+            "batch_id": self.batch_id,
+            "scan_id": self.scan_id,
+            "error": self.error,
+            "timeout": self.timeout,
+        }
 
 
 _engine = None
@@ -405,6 +440,14 @@ def scan_stats(days: int = 30) -> dict[str, Any]:
             .order_by(day.desc())
         ).all()
 
+        names = session.execute(select(Scan.model_name).where(window)).scalars().all()
+        n_url_only = sum(1 for name in names if "URL-only" in (name or ""))
+        n_disagreement = sum(1 for name in names if "URL disagreement" in (name or ""))
+        n_page = max(0, int(total) - n_url_only - n_disagreement)
+        n_withheld = sum(
+            int(c) for v, c in verdicts if str(v) not in LIVE_RISK_VERDICTS
+        )
+
         return {
             "days": int(days),
             "since": cutoff.isoformat(),
@@ -415,4 +458,70 @@ def scan_stats(days: int = 30) -> dict[str, Any]:
                 {"date": str(d), "scans": int(c), "mean_probability": float(p or 0.0)}
                 for d, c, p in daily
             ],
+            "url_only": n_url_only,
+            "page": n_page,
+            "disagreement": n_disagreement,
+            "withheld": n_withheld,
         }
+
+
+def create_scan_job(
+    url: str,
+    *,
+    timeout: int = 8,
+    client_key: str = "",
+    batch_id: str | None = None,
+) -> str:
+    """Insert a queued job and return its id."""
+    job_id = str(uuid.uuid4())
+    with session_scope() as session:
+        session.add(
+            ScanJob(
+                id=job_id,
+                status="queued",
+                url=url,
+                batch_id=batch_id,
+                client_key=client_key[:64],
+                timeout=int(timeout),
+            )
+        )
+    return job_id
+
+
+def get_scan_job(job_id: str) -> ScanJob | None:
+    with session_scope() as session:
+        row = session.get(ScanJob, job_id)
+        if row is None:
+            return None
+        session.expunge(row)
+        return row
+
+
+def list_batch_jobs(batch_id: str) -> list[ScanJob]:
+    with session_scope() as session:
+        rows = session.scalars(
+            select(ScanJob)
+            .where(ScanJob.batch_id == batch_id)
+            .order_by(ScanJob.created_at.asc())
+        ).all()
+        for row in rows:
+            session.expunge(row)
+        return list(rows)
+
+
+def update_scan_job(
+    job_id: str,
+    *,
+    status: str,
+    scan_id: int | None = None,
+    error: str | None = None,
+) -> None:
+    with session_scope() as session:
+        row = session.get(ScanJob, job_id)
+        if row is None:
+            return
+        row.status = status
+        if scan_id is not None:
+            row.scan_id = scan_id
+        if error is not None:
+            row.error = error[:2000]

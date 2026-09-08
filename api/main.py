@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -22,10 +22,11 @@ from api.security import (
 )
 from phishing.agent import AgentUnavailableError
 from phishing.agent import answer as agent_answer
-from phishing.db import init_db, recent_scans, record_scan, scan_stats
+from phishing.db import init_db, recent_scans, record_scan, scan_by_id, scan_stats
+from phishing.jobs import batch_status, enqueue_batch, enqueue_scan_job, job_status
 from phishing.netguard import UnsafeTargetError
 from phishing.scanner import available_models, research_findings, scan
-from phishing.settings import GROQ_MODEL, groq_api_key
+from phishing.settings import BATCH_MAX_URLS, GROQ_MODEL, groq_api_key
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST_DIR = ROOT / "web" / "dist"
@@ -56,6 +57,11 @@ app = FastAPI(
 
 class ScanRequest(BaseModel):
     url: str = Field(..., description="URL to scan", max_length=2048)
+    timeout: int = Field(8, ge=2, le=20, description="Per-request timeout in seconds")
+
+
+class BatchRequest(BaseModel):
+    urls: list[str] = Field(..., min_length=1, description="URLs to scan")
     timeout: int = Field(8, ge=2, le=20, description="Per-request timeout in seconds")
 
 
@@ -434,6 +440,62 @@ def scan_url(request: ScanRequest, http_request: Request) -> dict:
         ) from exc
 
 
+def _normalise_batch_urls(urls: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    for raw in urls:
+        url = (raw or "").strip()
+        if not url:
+            continue
+        if len(url) > 2048:
+            raise HTTPException(status_code=400, detail="URL exceeds 2048 characters.")
+        cleaned.append(url)
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="No URLs to scan.")
+    if len(cleaned) > BATCH_MAX_URLS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Batch is capped at {BATCH_MAX_URLS} URLs.",
+        )
+    return cleaned
+
+
+@app.post("/api/scan/jobs", dependencies=[Depends(require_api_key)])
+def create_scan_job(request: ScanRequest, http_request: Request) -> JSONResponse:
+    """Queue one scan and return immediately. Poll ``GET /api/scan/jobs/{id}``."""
+    key = client_key(http_request)
+    scan_limiter.check(key)
+    job_id = enqueue_scan_job(request.url, timeout=request.timeout, client_key=key)
+    return JSONResponse({"job_id": job_id}, status_code=202)
+
+
+@app.get("/api/scan/jobs/{job_id}", dependencies=[Depends(require_api_key)])
+def read_scan_job(job_id: str, http_request: Request) -> dict:
+    read_limiter.check(client_key(http_request))
+    payload = job_status(job_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Unknown scan job.")
+    return payload
+
+
+@app.post("/api/scan/batch", dependencies=[Depends(require_api_key)])
+def create_scan_batch(request: BatchRequest, http_request: Request) -> JSONResponse:
+    """Queue up to ``BATCH_MAX_URLS`` scans that share a batch id."""
+    urls = _normalise_batch_urls(request.urls)
+    key = client_key(http_request)
+    scan_limiter.check(key, cost=len(urls))
+    batch_id, job_ids = enqueue_batch(urls, timeout=request.timeout, client_key=key)
+    return JSONResponse({"batch_id": batch_id, "job_ids": job_ids}, status_code=202)
+
+
+@app.get("/api/scan/batch/{batch_id}", dependencies=[Depends(require_api_key)])
+def read_scan_batch(batch_id: str, http_request: Request) -> dict:
+    read_limiter.check(client_key(http_request))
+    payload = batch_status(batch_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Unknown scan batch.")
+    return payload
+
+
 @app.get("/api/agent")
 def agent_status() -> dict:
     """Whether chat needs a visitor-supplied Groq key.
@@ -526,6 +588,16 @@ def scans(
     """
     read_limiter.check(client_key(http_request))
     return {"scans": recent_scans(limit=limit, offset=offset)}
+
+
+@app.get("/api/scans/{scan_id}", dependencies=[Depends(require_api_key)])
+def scan_detail(scan_id: int, http_request: Request) -> dict:
+    """Full stored payload for one scan, for rehydrate and export."""
+    read_limiter.check(client_key(http_request))
+    row = scan_by_id(scan_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Unknown scan.")
+    return row
 
 
 @app.get("/api/stats", dependencies=[Depends(require_api_key)])

@@ -61,3 +61,17 @@ def test_grouped_split_does_not_leak_patterns():
     assert len(X_tr) + len(X_te) == len(X)
     assert abs(y_tr.mean() - y.mean()) < 0.03
     assert abs(y_te.mean() - y.mean()) < 0.03
+
+
+def test_fit_tld_legit_prob_is_a_shrunk_legitimacy_rate():
+    """Not P(TLD|legit): a rare-but-clean TLD must score above a common-but-mixed one."""
+    from phishing.data import fit_tld_legit_prob
+
+    tlds = ["uk"] * 20 + ["com"] * 100 + ["xyz"] * 20
+    # y=1 phishing, y=0 legitimate. uk is 95% legit; xyz is 5% legit; com is 60%.
+    y = [0] * 19 + [1] + [0] * 60 + [1] * 40 + [0] + [1] * 19
+    prior = fit_tld_legit_prob(tlds, y, k=10)
+    assert prior["uk"] > prior["com"] > prior["xyz"]
+    # Shrinkage pulls xyz up from 0.05 and uk down from 0.95.
+    assert 0.05 < prior["xyz"] < 0.3
+    assert 0.7 < prior["uk"] < 0.95

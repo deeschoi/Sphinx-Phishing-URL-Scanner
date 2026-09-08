@@ -112,6 +112,27 @@ export function Stats() {
             ))}
           </div>
 
+          {typeof stats.page === "number" || typeof stats.url_only === "number" ? (
+            <div className="stat-row">
+              <div className="stat">
+                <strong>{stats.page ?? 0}</strong>
+                <span>page-model scans</span>
+              </div>
+              <div className="stat">
+                <strong>{stats.url_only ?? 0}</strong>
+                <span>URL-only scans</span>
+              </div>
+              <div className="stat">
+                <strong>{stats.disagreement ?? 0}</strong>
+                <span>disagreement rule</span>
+              </div>
+              <div className="stat">
+                <strong>{stats.withheld ?? 0}</strong>
+                <span>withheld (no live rating)</span>
+              </div>
+            </div>
+          ) : null}
+
           <section className="finding">
             <h3>Verdict mix</h3>
             <p className="lede">

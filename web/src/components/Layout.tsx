@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 const TABS = [
   { to: "/", label: "Scanner", end: true },
+  { to: "/batch", label: "Batch", end: false },
   { to: "/history", label: "History", end: false },
   { to: "/stats", label: "Stats", end: false },
   { to: "/findings", label: "Research findings", end: false },
