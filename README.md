@@ -6,7 +6,7 @@
 
 Sphinx is a live phishing scanner you run as a website: FastAPI serves the trained model and the React UI from one process. It is not the Python documentation generator of the same name. Paste a URL and it fetches the page (JavaScript is never executed), scores the risk with a trained classifier, and shows which signals decided the verdict.
 
-There is no login on localhost. Scanner, History, Stats, and Research findings work without any API key from the same machine; callers from off-loopback addresses need `SPHINX_API_KEY` or an explicit `SPHINX_ALLOW_ANONYMOUS=1`. The analyst chat is optional: paste your own [Groq](https://console.groq.com/keys) key (`gsk_…`) in the panel when you want an explanation. That key lives in the browser’s `sessionStorage`, is sent only on `POST /api/chat` as `X-Groq-Api-Key`, and is not stored on the server.
+No login on localhost. Scanner, History, Stats, and Research work without any API key from the same machine; callers from off-loopback addresses need `SPHINX_API_KEY` or an explicit `SPHINX_ALLOW_ANONYMOUS=1`. Paste your own [Groq](https://console.groq.com/keys) key (`gsk_…`) in the panel when you want an explanation. That key lives in the browser’s `sessionStorage`, is sent only on `POST /api/chat` as `X-Groq-Api-Key`, and is not stored on the server.
 
 This repo began as a DATS 2103 coursework project on the 2012 UCI Phishing Websites table. The original notebook and write-up are unchanged under [`research/`](research/README.md). The scanner Sphinx serves today is trained on [PhiUSIIL](https://archive.ics.uci.edu/dataset/967/phiusiil+phishing+url+dataset) (Prasad & Chandra, 2023).
 
@@ -20,7 +20,7 @@ The web app has five sections:
 
 | Section | What it is for |
 |---|---|
-| **Scanner** | Paste a URL (or use the example chips). Returns a verdict, probability, SHAP contributors, and scan coverage. History's **Open** hydrates the stored payload via `?scan=`; **Scan again** lands here with `?url=` and actually runs. Optional analyst chat splits **Findings** (measured evidence) from **Commentary**. |
+| **Scanner** | Paste a URL. Returns a verdict, probability, SHAP contributors, and scan coverage. History's **Open** hydrates the stored payload via `?scan=`; **Scan again** lands here with `?url=` and actually runs. Optional analyst chat splits **Findings** (measured evidence) from **Commentary**. |
 | **Batch** | Paste up to 25 URLs. Each is queued as its own job; export the finished rows as CSV or JSON. |
 | **History** | Recent scans logged by the API, paginated 50 at a time. Credentials and token-shaped path segments are stripped before storage. |
 | **Stats** | Verdict mix, URL-only vs page share, disagreement-rule rate, and daily mean score over 7 / 30 / 90 days. Unreachable hosts are excluded from the mean. |
@@ -32,9 +32,9 @@ There is also a CLI (`phishing scan`) and an HTTP API (`POST /api/scan`, `POST /
 
 ## Public demo (Render)
 
-Sphinx is a long-running app, not a static site: GitHub Pages and Read the Docs cannot run `/api/scan`. A README “try it” link needs the Docker image on a host that keeps `uvicorn` up (Render, Fly, Cloud Run, a VPS). The intended public setup is a **Render Docker web service**, **Free** instance, **ephemeral SQLite**, **no `GROQ_API_KEY`**.
+Sphinx is a long-running app, not a static site. A README “try it” link needs the Docker image on a host that keeps `uvicorn` up (Render, Fly, Cloud Run, a VPS). The intended public setup is a **Render Docker web service**, **Free** instance, **ephemeral SQLite**, **no `GROQ_API_KEY`**.
 
-Visitors scan anonymously. Chat is bring-your-own-key so Groq bills them, not the operator. Health check **`/api/ready`** (not `/api/health`). First image build trains the model and can take 30–60+ minutes. Free instances sleep after idle; the next click pays a cold start. One instance, no autoscaling: rate limits are process-local.
+Visitors scan anonymously. Chat is bring-your-own-key so Groq bills them, not the operator. Health check **`/api/ready`** (not `/api/health`). First image build trains the model and can take 30+ minutes. Free instances sleep after idle; the next click pays a cold start. One instance, no autoscaling: rate limits are process-local.
 
 History, Stats, and the analyst's host-history tool read from the database. On Render Free the default SQLite file lives on the instance disk, so **every replace or spin-down wipes telemetry**. Attach a [Render disk](https://render.com/docs/disks) mounted at `/app/data` (the image writes `data/scans.db` there) or set `PHISHING_DATABASE_URL` to Postgres — compose already supports that via `docker compose --profile postgres up`. Without one of those, the History tab on a public demo is empty after the next deploy.
 
