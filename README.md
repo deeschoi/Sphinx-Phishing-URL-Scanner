@@ -1,7 +1,7 @@
 # Sphinx
 
 <p align="center">
-  <img src="docs/images/sphinx.jpeg" alt="Sphinx" width="400">
+  <img src="docs/images/sphinx.jpeg" alt="Sphinx" width="600">
 </p>
 
 Sphinx is a live phishing scanner you run as a website: FastAPI serves the trained model and the React UI from one process. It is not the Python documentation generator of the same name. Paste a URL and it fetches the page (JavaScript is never executed), scores the risk with a trained classifier, and shows which signals decided the verdict.
