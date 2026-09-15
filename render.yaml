@@ -9,8 +9,13 @@ services:
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/ready
     envVars:
+      # Also the effective batch cap: a batch of N spends N from this budget,
+      # so SPHINX_BATCH_MAX_URLS is clamped to this value. Raise both together
+      # to accept larger batches.
       - key: SPHINX_SCAN_RATE_PER_MINUTE
         value: "8"
+      # Concurrent outbound fetches peak at the sum of these two (2 + 2 = 4):
+      # sync /api/scan holds one pool, async jobs and batches hold the other.
       - key: SPHINX_SCAN_MAX_CONCURRENT
         value: "2"
       - key: SPHINX_JOB_WORKERS

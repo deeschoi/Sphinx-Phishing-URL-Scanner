@@ -62,9 +62,18 @@ def env_bool(name: str, default: bool = False) -> bool:
 SCAN_RATE_PER_MINUTE = env_int("SPHINX_SCAN_RATE_PER_MINUTE", 20)
 SCAN_MAX_CONCURRENT = env_int("SPHINX_SCAN_MAX_CONCURRENT", 4)
 # In-flight async jobs. Independent of SCAN_MAX_CONCURRENT so a polling client
-# does not hold a request-thread slot for the whole fetch.
+# does not hold a request-thread slot for the whole fetch. They are two separate
+# gates, not one shared pool, so the ceiling on concurrent outbound fetches is
+# their sum: SCAN_MAX_CONCURRENT (sync /api/scan) + JOB_WORKERS (jobs + batch).
+# Size both together when provisioning — the sum is what has to fit the host.
 JOB_WORKERS = max(1, env_int("SPHINX_JOB_WORKERS", SCAN_MAX_CONCURRENT))
+# A batch of N spends N from the per-minute scan budget as one all-or-nothing
+# charge, so a cap above that budget is unreachable: every batch larger than
+# SCAN_RATE_PER_MINUTE would 429 even on a completely idle window. Clamp so the
+# cap the API advertises — and rejects against — is one a caller can spend.
 BATCH_MAX_URLS = max(1, env_int("SPHINX_BATCH_MAX_URLS", 25))
+if SCAN_RATE_PER_MINUTE > 0:
+    BATCH_MAX_URLS = min(BATCH_MAX_URLS, SCAN_RATE_PER_MINUTE)
 # Chat is a separate budget so a public demo cannot be used as a Groq proxy.
 # Local defaults are generous; a hosted demo should set 5 / 1.
 CHAT_RATE_PER_MINUTE = env_int("SPHINX_CHAT_RATE_PER_MINUTE", 30)

@@ -89,7 +89,7 @@ Guarded routes require `X-API-Key` when `SPHINX_API_KEY` is set. When it is unse
 | `POST` | `/api/scan` | guarded | `{ "url", "timeout"? }` |
 | `POST` | `/api/scan/jobs` | guarded | `{ "url", "timeout"? }` → 202 `{ job_id }` |
 | `GET` | `/api/scan/jobs/{id}` | guarded | Status, and the full payload when `done` |
-| `POST` | `/api/scan/batch` | guarded | `{ "urls": [...], "timeout"? }` (cap 25; one rate-limit slot per URL) |
+| `POST` | `/api/scan/batch` | guarded | `{ "urls": [...], "timeout"? }` (cap is `SPHINX_BATCH_MAX_URLS` clamped to the per-minute scan budget; one rate-limit slot per URL) |
 | `GET` | `/api/scan/batch/{id}` | guarded | Per-URL status plus a rollup |
 | `POST` | `/api/chat` | guarded | Scan already returned. Optional `X-Groq-Api-Key`. |
 | `GET` | `/api/scans` | guarded | `limit` (1–200, default 50), `offset` |
