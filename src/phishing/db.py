@@ -36,7 +36,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from phishing.config import PROJECT_ROOT
+from phishing.config import PHIUSIIL_MODEL_FEATURES, PROJECT_ROOT
 from phishing.features.reachability import LIVE_RISK_VERDICTS
 from phishing.netguard import strip_userinfo
 
@@ -102,19 +102,93 @@ class Scan(Base):
         }
 
     def to_full_dict(self) -> dict[str, Any]:
-        """Full scan payload for the analyst, falling back to the slim row.
+        """Full scan payload for the analyst.
 
-        Always injects ``id``, ``created_at``, and ``duration_ms`` from the
-        authoritative row columns so callers can rely on those being present
-        regardless of what was stored in result_json.
+        Always injects ``id``, ``scan_id``, ``created_at``, and ``duration_ms``
+        from the authoritative row columns so callers can rely on those being
+        present regardless of what was stored in result_json.
         """
-        if self.result_json:
-            out = dict(self.result_json)
-            out["id"] = self.id
-            out["created_at"] = self.created_at.isoformat() if self.created_at else None
-            out.setdefault("duration_ms", self.duration_ms)
-            return out
-        return self.to_dict()
+        out = dict(self.result_json) if self.result_json else self._legacy_result()
+        out["id"] = self.id
+        out["scan_id"] = self.id
+        out["created_at"] = self.created_at.isoformat() if self.created_at else None
+        out.setdefault("duration_ms", self.duration_ms)
+        return out
+
+    def _legacy_result(self) -> dict[str, Any]:
+        """Reconstruct a full-shaped payload for rows predating ``result_json``.
+
+        The web client's ``ScanResult`` marks ``coverage``, ``reachability``,
+        and ``model_quality`` as required and dereferences them unguarded, so
+        returning the slim column set crashed the scan detail view. Only the
+        stored columns are real: probe-derived detail is reported as
+        ``not_probed`` and ``prediction`` stays null rather than being
+        recomputed against a ``warn_threshold`` that older rows may not carry.
+        """
+        features = self.features or {}
+        return {
+            "url": self.url,
+            "final_url": self.url,
+            "host_unicode": None,
+            "redirect_chain": [],
+            "http_status": None,
+            "reachability": {
+                "status": "not_probed",
+                "dns_ok": None,
+                "page_fetched": self.page_fetched,
+                "tls_inspected": self.tls_checked,
+                "final_url": None,
+                "status_code": None,
+                "n_redirects": 0,
+                "redirect_chain": [],
+                "truncated": False,
+            },
+            "risk": self.verdict if self.verdict in LIVE_RISK_VERDICTS else None,
+            "verdict": self.verdict,
+            "url_only": not self.page_fetched,
+            "probability": self.probability,
+            "page_probability": None,
+            "url_probability": None,
+            "url_pattern_risk": None,
+            "url_disagreement": False,
+            "rationale": (
+                "Recorded before full scan payloads were retained. The verdict, "
+                "score, features, and signals are from the original scan; the "
+                "live-probe detail was not kept."
+            ),
+            "notes": [],
+            "error": None,
+            "signals": self.signals or [],
+            "coverage": {
+                "reachability": "not_probed",
+                "dns_ok": None,
+                "page_fetched": self.page_fetched,
+                "https": self.url.lower().startswith("https://"),
+                "tls_checked": self.tls_checked,
+                "http_status": None,
+                "redirects": 0,
+                "truncated": False,
+                "features_used": len(features),
+                "features_in_dataset": len(PHIUSIIL_MODEL_FEATURES),
+                "redirect_hops": [],
+            },
+            "model": self.model_name,
+            "model_quality": {
+                # Null, not zero: the row never stored these, and a literal 0.0
+                # renders as a claim that the model scored 0% accuracy.
+                "accuracy": None,
+                "auroc": None,
+                "recall_at_warn": None,
+                "false_positive_rate_at_warn": None,
+                "warn_threshold": self.warn_threshold,
+                "block_threshold": self.block_threshold,
+                "live_sample": None,
+            },
+            "prediction": None,
+            "threshold": self.warn_threshold,
+            "warnings": [],
+            "features": features,
+        }
 
 
 class ScanJob(Base):

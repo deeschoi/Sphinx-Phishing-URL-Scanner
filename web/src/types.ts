@@ -56,10 +56,12 @@ export interface LiveSample {
 }
 
 export interface ModelQuality {
-  accuracy: number;
-  auroc: number;
-  recall_at_warn: number;
-  false_positive_rate_at_warn: number;
+  // Null for scans recorded before full payloads were retained: the row keeps
+  // the verdict and thresholds it was scored against, not the model's metrics.
+  accuracy: number | null;
+  auroc: number | null;
+  recall_at_warn: number | null;
+  false_positive_rate_at_warn: number | null;
   warn_threshold: number;
   block_threshold: number;
   measured_on?: string;
