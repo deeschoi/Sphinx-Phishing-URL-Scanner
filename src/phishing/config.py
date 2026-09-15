@@ -424,6 +424,10 @@ PHIUSIIL_MINIFIED_LINE_CHARS = 20_000
 
 PHIUSIIL_MODEL_FEATURES = PHIUSIIL_URL_FEATURES + PHIUSIIL_HTML_FEATURES
 
+assert len(PHIUSIIL_MODEL_FEATURES) == 48
+assert len(set(PHIUSIIL_MODEL_FEATURES)) == 48
+assert set(PHIUSIIL_SPA_LINK_FEATURES) <= set(PHIUSIIL_HTML_FEATURES)
+
 PHIUSIIL_FEATURE_LABELS = {
     "URLLength": "URL length",
     "DomainLength": "Hostname length",
@@ -444,7 +448,7 @@ PHIUSIIL_FEATURE_LABELS = {
     "SpacialCharRatioInURL": "Special-character ratio",
     "IsHTTPS": "Uses HTTPS",
     "CharContinuationRate": "Uninterrupted character runs in the domain",
-    "TLDLegitimateProb": "How common this TLD is among legitimate sites",
+    "TLDLegitimateProb": "Share of training sites on this TLD that were legitimate",
     "IsFreeHostingPlatform": "Free shared-hosting platform",
     "LineOfCode": "HTML line count",
     "LargestLineLength": "Longest HTML line",
