@@ -4,6 +4,10 @@
   <img src="docs/images/sphinx.jpeg" alt="Sphinx" width="600">
 </p>
 
+<p align="center">
+  <a href="https://sphinx-tnna.onrender.com">Try Sphinx!</a>
+</p>
+
 Sphinx is a live phishing scanner you run as a website: FastAPI serves the trained model and the React UI from one process. It is not the Python documentation generator of the same name. Paste a URL and it fetches the page (JavaScript is never executed), scores the risk with a trained classifier, and shows which signals decided the verdict.
 
 No login on localhost. Scanner, History, Stats, and Research work without any API key from the same machine; callers from off-loopback addresses need `SPHINX_API_KEY` or an explicit `SPHINX_ALLOW_ANONYMOUS=1`. Paste your own [Groq](https://console.groq.com/keys) key (`gsk_…`) in the panel when you want an explanation. That key lives in the browser’s `sessionStorage`, is sent only on `POST /api/chat` as `X-Groq-Api-Key`, and is not stored on the server.
