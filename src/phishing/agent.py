@@ -461,9 +461,10 @@ over the network, and that is what a scan of a real URL gets.
 URL-only, lead with that. A URL-string score is not a judgment of a live site.
 5. Known weaknesses, which you should raise when they are relevant rather than \
 waiting to be asked: the training table has almost no legitimate `http://` \
-rows, so plain HTTP scores as phishing structurally; rare TLDs like `.io` and \
-`.app` carry a near-zero legitimacy prior, so real sites on them score high on \
-the URL string alone; phishing kits hosted on trusted platforms \
+rows, so plain HTTP scores as phishing structurally; `TLDLegitimateProb` is a \
+per-TLD legitimate rate, so a TLD whose training population is phishing-heavy \
+(`.app` 0.026, `.xyz` 0.035) still pushes the URL-string score up on its own, \
+whatever the individual site is; phishing kits hosted on trusted platforms \
 (firebaseapp.com, web.app, workers.dev) are the model's main live blind spot \
 because their platform HTML looks rich.
 6. Structure every answer in exactly two sections, in this order, with these \
@@ -602,9 +603,10 @@ TOOLS: list[dict[str, Any]] = [
                 "What a feature measures, how it is extracted, what each encoded value "
                 "means, and any known leaks or limitations. Use this when the user asks "
                 "why a feature scored the way it did, what a feature name means, or "
-                "whether a feature is reliable (e.g. why TLDLegitimateProb is near-zero "
-                "for .io / .app, why IsHTTPS is the scheme bit and not a certificate "
-                "check, or what a percent-encoding hint means for the scanned URL)."
+                "whether a feature is reliable (e.g. what TLDLegitimateProb's per-TLD "
+                "prior does and does not say about a site, why IsHTTPS is the scheme "
+                "bit and not a certificate check, or what a percent-encoding hint "
+                "means for the scanned URL)."
             ),
             "parameters": {
                 "type": "object",
@@ -760,10 +762,15 @@ class ScanTools:
         caveats: list[str] = []
         if name == "TLDLegitimateProb":
             caveats.append(
-                "Near-zero for .io (0.013) and .app (0.0015): real sites on these TLDs "
-                "score 0.83–0.95 on the URL string alone. This is a documented leak "
-                "pinned in tests/test_phiusiil.py. The value reflects training-set "
-                "prevalence, not actual safety."
+                "P(legitimate | TLD), Bayesian-shrunk toward the global legitimate base "
+                "rate with a pseudocount of 50 — refitted from the training labels, not "
+                "the dataset's original P(TLD | legit) volume share. Under that old "
+                "encoding any low-volume TLD looked like phishing; it now tracks the "
+                "actual legitimate rate (.uk 0.95, .org 0.88, .com 0.61, .io 0.11), "
+                "while phishing-heavy TLDs still score low (.xyz 0.035, .app 0.026). A "
+                "low value is weak evidence about that TLD's population, never about "
+                "this site. A TLD absent from the training table gets the table mean "
+                "(~0.55)."
             )
         elif name == "IsHTTPS":
             caveats.append(
@@ -945,6 +952,15 @@ def _post(payload: dict[str, Any], api_key: str) -> dict[str, Any]:
     raise AgentUnavailableError(f"Groq error {response.status_code}: {detail}")
 
 
+def _is_reasoning_model(model: str) -> bool:
+    """Whether ``model`` spends tokens on hidden chain-of-thought.
+
+    These need ``reasoning_effort`` set or the scratchpad eats the whole
+    completion budget and the visible content field comes back empty.
+    """
+    return "gpt-oss" in model or model.startswith("o1") or model.startswith("o3")
+
+
 def _sanitise_history(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Keep only user/assistant text turns, truncated and length-capped.
 
@@ -1019,11 +1035,7 @@ def answer(
         # reasoning_effort tells Groq's reasoning models to emit a visible
         # content field within the token budget rather than spending everything
         # on hidden chain-of-thought. Ignored by non-reasoning models.
-        if (
-            "gpt-oss" in active_model
-            or active_model.startswith("o1")
-            or active_model.startswith("o3")
-        ):
+        if _is_reasoning_model(active_model):
             payload["reasoning_effort"] = "default"
         data = _post(payload, api_key=key)
         choices = data.get("choices") or []
@@ -1087,11 +1099,7 @@ def answer(
         "temperature": 0.2,
         "max_completion_tokens": 2400,
     }
-    if (
-        "gpt-oss" in active_model
-        or active_model.startswith("o1")
-        or active_model.startswith("o3")
-    ):
+    if _is_reasoning_model(active_model):
         budget_payload["reasoning_effort"] = "default"
     data = _post(budget_payload, api_key=key)
     final = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
