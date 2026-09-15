@@ -24,8 +24,8 @@ The web app has five sections:
 
 | Section | What it is for |
 |---|---|
-| **Scanner** | Paste a URL. Returns a verdict, probability, SHAP contributors, and scan coverage. History's **Open** hydrates the stored payload via `?scan=`; **Scan again** lands here with `?url=` and actually runs. Optional analyst chat splits **Findings** (measured evidence) from **Commentary**. |
-| **Batch** | Paste up to 25 URLs. Each is queued as its own job; export the finished rows as CSV or JSON. |
+| **Scanner** | Paste a URL (or use the example chips). Returns a verdict, probability, SHAP contributors, and scan coverage. History's **Open** hydrates the stored payload via `?scan=`; **Scan again** lands here with `?url=` and actually runs. Optional analyst chat splits **Findings** (measured evidence) from **Commentary**. |
+| **Batch** | Paste a list of URLs. Each is queued as its own job; export the finished rows as CSV or JSON. |
 | **History** | Recent scans logged by the API, paginated 50 at a time. Credentials and token-shaped path segments are stripped before storage. |
 | **Stats** | Verdict mix, URL-only vs page share, disagreement-rule rate, and daily mean score over 7 / 30 / 90 days. Unreachable hosts are excluded from the mean. |
 | **Research findings** | Headline tables from the 2012 UCI analysis that started this project (leakage, encoding, decay). Nothing on that page is used to score a URL. |
@@ -124,7 +124,7 @@ phishing scan --tier A https://example.com   # URL string only, no network fetch
 | `GROQ_API_KEY` | unset | Optional operator fallback. Omit on a public host; visitors can still send `X-Groq-Api-Key` |
 | `PHISHING_DATABASE_URL` | SQLite under `data/` | Scan telemetry. Point at Postgres for compose `--profile postgres`, or attach a Render disk at `/app/data` so History survives replaces |
 | `SPHINX_JOB_WORKERS` | same as `SPHINX_SCAN_MAX_CONCURRENT` | In-flight async scan jobs |
-| `SPHINX_BATCH_MAX_URLS` | `25` | Cap on `POST /api/scan/batch` |
+| `SPHINX_BATCH_MAX_URLS` | `25` | Cap on `POST /api/scan/batch`, clamped to `SPHINX_SCAN_RATE_PER_MINUTE` (a batch of N spends N) |
 | `SPHINX_TRUST_PROXY_HEADERS` | `0` | Honour `X-Forwarded-For` only behind a proxy you control |
 
 `POST /api/scan` fetches a caller-chosen URL. Keep the rate limits, bind behind a reverse proxy (compose already binds `127.0.0.1:8000`), leave `SPHINX_ALLOW_ANONYMOUS` at its `loopback` default unless the service is intentionally public, and omit `GROQ_API_KEY` on public hosts.
