@@ -1,14 +1,23 @@
 import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { createScanJob, fetchScan, fetchScanJob } from "../api";
+import {
+  POLL_START_MS,
+  RATE_LIMIT_RETRIES,
+  createScanJob,
+  fetchScan,
+  fetchScanJob,
+  isRateLimited,
+  nextPollDelay,
+  rateLimitWaitMs,
+} from "../api";
 import { Analyst } from "../components/Analyst";
 import { Gauge } from "../components/Gauge";
 import { StatusMessage } from "../components/EmptyState";
 import { VerdictBadge } from "../components/VerdictBadge";
 import { downloadJson } from "../export";
-import { formatProbability, pct, yesNo } from "../format";
+import { fixed, formatProbability, pct, yesNo } from "../format";
 import { WITHHELD_VERDICTS, urlPatternClass, urlPatternLabel } from "../verdict";
-import type { ScanResult, Signal } from "../types";
+import type { ScanJob, ScanResult, Signal } from "../types";
 
 const EXAMPLES = [
   { url: "https://www.wikipedia.org", label: "wikipedia.org" },
@@ -47,8 +56,22 @@ export function Scanner() {
       const { job_id } = await createScanJob(trimmed);
       if (id !== requestId.current) return;
       let polls = 0;
+      let delay = POLL_START_MS;
+      let rateLimited = 0;
       while (id === requestId.current) {
-        const job = await fetchScanJob(job_id);
+        let job: ScanJob;
+        try {
+          job = await fetchScanJob(job_id);
+        } catch (err) {
+          // A 429 means this client spent its read budget, not that the scan
+          // failed — the job is still running server-side, so wait for the
+          // window to drain rather than reporting a scan that never broke.
+          if (!isRateLimited(err) || ++rateLimited > RATE_LIMIT_RETRIES) throw err;
+          setStatus("Rate limit reached — still scanning, waiting to check again…");
+          await new Promise((resolve) => setTimeout(resolve, rateLimitWaitMs(err)));
+          continue;
+        }
+        rateLimited = 0;
         if (id !== requestId.current) return;
         if (job.status === "queued") {
           setStatus("Queued…");
@@ -67,7 +90,8 @@ export function Scanner() {
           throw new Error(job.error || "Scan failed.");
         }
         polls += 1;
-        await new Promise((resolve) => setTimeout(resolve, 400));
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        delay = nextPollDelay(delay);
       }
     } catch (err) {
       if (id !== requestId.current) return;
@@ -294,7 +318,7 @@ function ScanResultView({ result }: { result: ScanResult }) {
           <h4>Model reliability</h4>
           <dl>
             <Meta term="Held-out accuracy" value={pct(quality.accuracy)} />
-            <Meta term="AUROC" value={quality.auroc.toFixed(3)} />
+            <Meta term="AUROC" value={fixed(quality.auroc, 3)} />
             <Meta
               term="Warn / block thresholds"
               value={`${quality.warn_threshold.toFixed(2)} / ${quality.block_threshold.toFixed(2)}`}

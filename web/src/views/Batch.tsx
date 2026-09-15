@@ -1,12 +1,18 @@
 import { type FormEvent, useCallback, useState } from "react";
-import { createScanBatch, fetchScanBatch } from "../api";
+import {
+  POLL_START_MS,
+  RATE_LIMIT_RETRIES,
+  createScanBatch,
+  fetchScanBatch,
+  isRateLimited,
+  nextPollDelay,
+  rateLimitWaitMs,
+} from "../api";
 import { EmptyState, StatusMessage } from "../components/EmptyState";
 import { VerdictBadge } from "../components/VerdictBadge";
 import { downloadJson, downloadText } from "../export";
 import { formatProbability } from "../format";
 import type { ScanBatch, ScanJob } from "../types";
-
-const POLL_MS = 500;
 
 export function Batch() {
   const [text, setText] = useState("");
@@ -15,11 +21,25 @@ export function Batch() {
   const [batch, setBatch] = useState<ScanBatch | null>(null);
 
   const poll = useCallback(async (batchId: string) => {
+    let delay = POLL_START_MS;
+    let rateLimited = 0;
     for (;;) {
-      const payload = await fetchScanBatch(batchId);
+      let payload: ScanBatch;
+      try {
+        payload = await fetchScanBatch(batchId);
+      } catch (err) {
+        // A 429 means this client spent its read budget, not that the batch
+        // failed — the jobs are still running server-side, so wait for the
+        // window to drain instead of reporting a failure that did not happen.
+        if (!isRateLimited(err) || ++rateLimited > RATE_LIMIT_RETRIES) throw err;
+        await new Promise((resolve) => setTimeout(resolve, rateLimitWaitMs(err)));
+        continue;
+      }
+      rateLimited = 0;
       setBatch(payload);
       if (payload.status === "done" || payload.status === "error") return;
-      await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      delay = nextPollDelay(delay);
     }
   }, []);
 
@@ -84,7 +104,9 @@ export function Batch() {
         />
         <div className="toolbar">
           <p>
-            Capped at 25 URLs. Each URL spends one scan from the per-minute budget.
+            Each URL spends one scan from the per-minute budget, so the cap
+            tracks that budget and is enforced by the server — an oversized
+            batch is rejected with the limit in the message.
             {batch
               ? ` ${batch.done + batch.error} of ${batch.total} finished.`
               : null}

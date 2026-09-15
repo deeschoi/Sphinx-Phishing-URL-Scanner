@@ -18,6 +18,53 @@ export function errorMessage(payload: unknown, fallback = "Request failed."): st
   return fallback;
 }
 
+/** A non-2xx response, carrying the bits a caller needs to decide whether to
+ *  retry. Extends Error so existing `err instanceof Error` / `err.message`
+ *  handling keeps working unchanged. */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly retryAfterMs: number | null;
+
+  constructor(message: string, status: number, retryAfterMs: number | null) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+function parseRetryAfter(response: Response): number | null {
+  // Test doubles stub Response as a bare object with no headers.
+  const raw = response.headers?.get("Retry-After");
+  if (!raw) return null;
+  const seconds = Number(raw);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null;
+}
+
+/** Polling cadence. A job poll spends from the same per-minute read budget as
+ *  the rest of the UI, so the interval grows instead of hammering a fixed one:
+ *  400ms first (a short scan still feels instant), then ×1.5 up to 3s, which
+ *  keeps a multi-minute scan near 20 polls/min against a 60/min budget. */
+export const POLL_START_MS = 400;
+const POLL_MAX_MS = 3000;
+
+export function nextPollDelay(current: number): number {
+  return Math.min(Math.round(current * 1.5), POLL_MAX_MS);
+}
+
+/** How many consecutive 429s a polling loop rides out before giving up. At the
+ *  clamp below this spans more than one full rate-limit window, so the budget
+ *  is guaranteed to have drained if the server is going to let us back in. */
+export const RATE_LIMIT_RETRIES = 5;
+
+export function rateLimitWaitMs(error: ApiError): number {
+  return Math.min(Math.max(error.retryAfterMs ?? 5000, 1000), 15000);
+}
+
+export function isRateLimited(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 429;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has("Content-Type")) {
@@ -29,7 +76,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...init, headers });
   const payload: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(errorMessage(payload, response.statusText || "Request failed."));
+    throw new ApiError(
+      errorMessage(payload, response.statusText || "Request failed."),
+      response.status,
+      parseRetryAfter(response),
+    );
   }
   return payload as T;
 }
