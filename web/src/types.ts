@@ -120,12 +120,12 @@ export interface ScanResult {
   coverage: Coverage;
   model: string;
   model_quality: ModelQuality;
-  scan_id?: number | null;
+  scan_id?: string | null;
   duration_ms?: number;
 }
 
 export interface ScanRecord {
-  id: number;
+  id: string;
   created_at: string | null;
   url: string;
   host: string;
@@ -166,7 +166,7 @@ export interface ScanJob {
   status: "queued" | "running" | "done" | "error" | string;
   url: string;
   batch_id?: string | null;
-  scan_id?: number | null;
+  scan_id?: string | null;
   error?: string | null;
   result?: ScanResult | null;
 }

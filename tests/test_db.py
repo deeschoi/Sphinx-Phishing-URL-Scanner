@@ -212,4 +212,47 @@ def test_scan_by_id_returns_the_row_or_none(db):
     row = db.scan_by_id(scan_id)
     assert row is not None
     assert row["id"] == scan_id
-    assert db.scan_by_id(scan_id + 999) is None
+    assert db.scan_by_id("not-a-real-id") is None
+
+
+def test_stored_payload_drops_query_and_path_secrets(db):
+    """History detail must not keep a query token or a secret-shaped path."""
+    import json
+
+    secret = "a" * 32
+    token = "SUPERSECRET"
+    url = f"https://bank.example/reset/{secret}?token={token}"
+    payload = sample_result(url)
+    payload.update(
+        {
+            "final_url": url,
+            "redirect_chain": [url],
+            "rationale": f"landed on {url}",
+            "signals": [{"feature": "x", "evidence": url, "contribution": 0.1}],
+            "coverage": {
+                "page_fetched": True,
+                "tls_checked": True,
+                "redirect_hops": [{"url": url, "host": "bank.example"}],
+            },
+        }
+    )
+    scan_id = db.record_scan(payload)
+    dumped = json.dumps(db.scan_by_id(scan_id))
+    assert token not in dumped
+    assert secret not in dumped
+    assert token in payload["url"]
+
+
+def test_open_anonymous_history_is_scoped_to_the_caller(db, monkeypatch):
+    monkeypatch.setattr("phishing.settings.api_key", lambda: "")
+    monkeypatch.setattr("phishing.settings.allow_anonymous", lambda: "1")
+    mine = db.record_scan(sample_result("https://a.example/"), client_key="1.1.1.1")
+    theirs = db.record_scan(sample_result("https://b.example/"), client_key="2.2.2.2")
+
+    listed = db.recent_scans(client_key="1.1.1.1")
+    assert [row["url"] for row in listed] == ["https://a.example/"]
+    assert db.scan_by_id(mine, client_key="1.1.1.1") is not None
+    assert db.scan_by_id(theirs, client_key="1.1.1.1") is None
+    stats = db.scan_stats(client_key="1.1.1.1")
+    assert stats["total_scans"] == 1
+    assert stats["total_scans_all_time"] == 1

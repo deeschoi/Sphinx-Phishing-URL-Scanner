@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import uuid
 from typing import Any
 from urllib.parse import urlparse
 
@@ -137,6 +138,16 @@ def _unit_interval(value: Any) -> float | None:
     if number is None or number < 0 or number > 1:
         return None
     return number
+
+
+def _as_public_id(value: Any) -> str | None:
+    """Accept only a UUID. Sequential integers must not address a stored scan."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return str(uuid.UUID(str(value).strip()))
+    except (ValueError, AttributeError, TypeError):
+        return None
 
 
 def _as_optional_int(value: Any) -> int | None:
@@ -300,12 +311,12 @@ def _normalise_scan(result: Any) -> dict[str, Any]:
             if live_in
             else {},
         },
-        "scan_id": _as_optional_int(src.get("scan_id")),
+        "scan_id": _as_public_id(src.get("scan_id")),
         "_telemetry_disagreed": bool(src.get("_telemetry_disagreed")),
     }
 
 
-def _apply_stored_scan(scan: dict[str, Any]) -> dict[str, Any]:
+def _apply_stored_scan(scan: dict[str, Any], client_key: str = "") -> dict[str, Any]:
     """Replace the client payload with the server-stored version when available.
 
     When ``result_json`` was persisted (rows written after the schema
@@ -326,7 +337,7 @@ def _apply_stored_scan(scan: dict[str, Any]) -> dict[str, Any]:
     try:
         from phishing.db import scan_by_id
 
-        row = scan_by_id(scan_id)
+        row = scan_by_id(scan_id, client_key=client_key)
     except Exception:  # noqa: BLE001 — telemetry must never fail chat
         return scan
     if not row:
@@ -629,8 +640,9 @@ TOOLS: list[dict[str, Any]] = [
 class ScanTools:
     """Tool implementations bound to one scan payload."""
 
-    def __init__(self, result: dict[str, Any]) -> None:
+    def __init__(self, result: dict[str, Any], client_key: str = "") -> None:
         self.result = _normalise_scan(result)
+        self.client_key = client_key
         self.rescans = 0
         self._allowed_hosts = {
             host
@@ -836,7 +848,7 @@ class ScanTools:
         wanted = (host or "").lower().strip().rstrip(".")[:255]
         if not wanted or wanted not in self._allowed_hosts:
             return {"error": "History is only available for the host under discussion."}
-        rows = scans_for_host(wanted, limit=10)
+        rows = scans_for_host(wanted, limit=10, client_key=self.client_key)
         return {"host": wanted, "previous_scans": rows, "count": len(rows)}
 
     def rescan_url(self, url: str) -> Any:
@@ -863,7 +875,7 @@ class ScanTools:
         # Persist to History so the new scan shows up, and capture the id.
         try:
             from phishing.db import record_scan
-            new_id = record_scan(fresh)
+            new_id = record_scan(fresh, client_key=self.client_key)
             if new_id is not None:
                 fresh["scan_id"] = new_id
         except Exception:  # noqa: BLE001 — telemetry must not fail the tool
@@ -984,6 +996,7 @@ def answer(
     *,
     api_key: str | None = None,
     model: str | None = None,
+    client_key: str = "",
 ) -> dict[str, Any]:
     """Answer the latest user turn about ``scan_result``, running tools as needed.
 
@@ -1005,8 +1018,8 @@ def answer(
     if not history or history[-1]["role"] != "user":
         raise ValueError("The last message must be from the user.")
 
-    scan_result = _apply_stored_scan(_normalise_scan(scan_result))
-    tools = ScanTools(scan_result)
+    scan_result = _apply_stored_scan(_normalise_scan(scan_result), client_key=client_key)
+    tools = ScanTools(scan_result, client_key=client_key)
     convo: list[dict[str, Any]] = [
         {
             "role": "system",

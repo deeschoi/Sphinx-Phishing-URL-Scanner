@@ -51,7 +51,7 @@ def _run_job(job_id: str) -> None:
         started = time.perf_counter()
         result = scan(row.url, timeout=row.timeout)
         duration_ms = int((time.perf_counter() - started) * 1000)
-        scan_id = record_scan(result, duration_ms=duration_ms)
+        scan_id = record_scan(result, duration_ms=duration_ms, client_key=row.client_key)
         result["scan_id"] = scan_id
         result["duration_ms"] = duration_ms
         with _results_lock:
@@ -112,7 +112,11 @@ def _job_payload(job_id: str) -> dict[str, Any] | None:
         return None
     payload = row.to_dict()
     if row.status == "done":
-        result = scan_by_id(row.scan_id) if row.scan_id is not None else None
+        result = (
+            scan_by_id(row.scan_id, client_key=row.client_key)
+            if row.scan_id is not None
+            else None
+        )
         if result is None:
             with _results_lock:
                 result = _results.get(job_id)

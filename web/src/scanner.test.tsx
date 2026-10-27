@@ -397,7 +397,7 @@ describe("Scanner", () => {
   });
 
   it("hydrates a stored scan from ?scan= without submitting a job", async () => {
-    const spy = stubScanApi(scanResult({ url: "https://stored.example", scan_id: 9 }));
+    const spy = stubScanApi(scanResult({ url: "https://stored.example", scan_id: "9" }));
     renderScanner("/?scan=9");
 
     expect(await screen.findByText("legitimate")).toBeInTheDocument();

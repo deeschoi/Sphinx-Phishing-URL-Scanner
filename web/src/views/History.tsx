@@ -42,8 +42,8 @@ export function History() {
       <h2 className="page-title">Scan history</h2>
       <div className="toolbar">
         <p>
-          Recent scans stored by the API. Query strings are stripped before they are
-          written, so session tokens never sit in the history table.
+          Recent scans stored by the API. Query strings and secret-shaped path
+          segments are removed before a scan is stored.
         </p>
         <div className="toolbar-actions">
           <button

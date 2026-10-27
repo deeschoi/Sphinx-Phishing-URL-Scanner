@@ -29,6 +29,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    and_,
     case,
     create_engine,
     func,
@@ -86,10 +87,18 @@ class Scan(Base):
     # of the browser-echoed copy. Nullable so older rows (and the migration
     # down-path) stay valid.
     result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=None)
+    # Unguessable id for /api/scans/{id}. The integer primary key stays internal
+    # so a public demo cannot walk history by counting.
+    public_id: Mapped[str] = mapped_column(
+        String(36), unique=True, index=True, default=lambda: str(uuid.uuid4())
+    )
+    # Set from the rate-limit client key. When the service is intentionally
+    # anonymous, history and stats are filtered to this value.
+    client_key: Mapped[str] = mapped_column(String(64), default="", index=True)
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "id": self.id,
+            "id": self.public_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "url": self.url,
             "host": self.host,
@@ -109,8 +118,8 @@ class Scan(Base):
         present regardless of what was stored in result_json.
         """
         out = dict(self.result_json) if self.result_json else self._legacy_result()
-        out["id"] = self.id
-        out["scan_id"] = self.id
+        out["id"] = self.public_id
+        out["scan_id"] = self.public_id
         out["created_at"] = self.created_at.isoformat() if self.created_at else None
         out.setdefault("duration_ms", self.duration_ms)
         return out
@@ -195,7 +204,7 @@ class ScanJob(Base):
     """An async scan: queued, running, done, or error.
 
     ``batch_id`` groups the jobs created by one ``POST /api/scan/batch``.
-    ``scan_id`` points at the ``scans`` row once the worker finishes.
+    ``scan_id`` is the scan's public id once the worker finishes.
     """
 
     __tablename__ = "scan_jobs"
@@ -207,7 +216,8 @@ class ScanJob(Base):
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     url: Mapped[str] = mapped_column(Text)
     batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
-    scan_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Public id of the scans row, not the integer primary key.
+    scan_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     client_key: Mapped[str] = mapped_column(String(64), default="")
     timeout: Mapped[int] = mapped_column(Integer, default=8)
@@ -412,16 +422,76 @@ def strip_query(url: str) -> str:
     return urlunparse(parsed._replace(path=_redact_path(parsed.path), query="", fragment=""))
 
 
-def record_scan(result: dict[str, Any], duration_ms: int = 0) -> int | None:
-    """Persist a scan result. Returns the row id, or None if storage failed.
+_URL_IN_TEXT = re.compile(r"https?://[^\s<>\"']+")
+_OPEN_ANONYMOUS = frozenset({"1", "true", "all", "yes", "on"})
+
+
+def _redact_urls_in_text(text: str) -> str:
+    """Strip query strings and token-shaped path segments out of URL text."""
+    return _URL_IN_TEXT.sub(lambda match: strip_query(match.group(0)), text)
+
+
+def _scrub_stored(value: Any) -> Any:
+    """Recursively redact URLs inside a JSON-shaped value."""
+    if isinstance(value, str):
+        return _redact_urls_in_text(value)
+    if isinstance(value, list):
+        return [_scrub_stored(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _scrub_stored(item) for key, item in value.items()}
+    return value
+
+
+def redact_stored_result(result: dict[str, Any] | None) -> dict[str, Any]:
+    """Copy ``result`` into the form that may be written to scan history.
+
+    The live response still returns the URL the caller just submitted. History
+    is a different audience: on a public demo the next visitor can open it.
+    """
+    if not isinstance(result, dict):
+        return {}
+    scrubbed = _scrub_stored(result)
+    return scrubbed if isinstance(scrubbed, dict) else {}
+
+
+def history_scoped() -> bool:
+    """Whether history and stats are limited to the calling client.
+
+    An API key is a single tenant, and loopback is one person at the keyboard.
+    The explicit public-demo opt-in is the case where strangers share a database.
+    """
+    from phishing.settings import allow_anonymous, api_key
+
+    if api_key():
+        return False
+    return allow_anonymous() in _OPEN_ANONYMOUS
+
+
+def _scope_clause(client_key: str | None):
+    if not history_scoped():
+        return None
+    return Scan.client_key == (client_key or "")[:64]
+
+
+def record_scan(
+    result: dict[str, Any],
+    duration_ms: int = 0,
+    client_key: str = "",
+) -> str | None:
+    """Persist a scan result. Returns the public id, or None if storage failed.
 
     Telemetry must never turn a successful scan into a failed request, so all
     database errors are swallowed here and surfaced only in the logs.
+    ``result_json`` is redacted first: query strings and token-shaped path
+    segments are removed from every URL in the payload, not only the ``url``
+    column.
     """
     try:
         url = str(result.get("url", ""))
         coverage = result.get("coverage") or {}
         quality = result.get("model_quality") or {}
+        stored = redact_stored_result(result)
+        signals = stored.get("signals") if isinstance(stored.get("signals"), list) else []
         with session_scope() as session:
             row = Scan(
                 url=strip_query(url),
@@ -436,12 +506,13 @@ def record_scan(result: dict[str, Any], duration_ms: int = 0) -> int | None:
                 page_fetched=bool(coverage.get("page_fetched", False)),
                 tls_checked=bool(coverage.get("tls_checked", False)),
                 features=result.get("features") or {},
-                signals=result.get("signals") or [],
-                result_json=dict(result),
+                signals=signals,
+                result_json=stored,
+                client_key=(client_key or "")[:64],
             )
             session.add(row)
             session.flush()
-            return row.id
+            return row.public_id
     except Exception:  # noqa: BLE001 - logging telemetry must not break scanning
         import logging
 
@@ -449,43 +520,64 @@ def record_scan(result: dict[str, Any], duration_ms: int = 0) -> int | None:
         return None
 
 
-def recent_scans(limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+def recent_scans(
+    limit: int = 50,
+    offset: int = 0,
+    *,
+    client_key: str | None = None,
+) -> list[dict[str, Any]]:
     with session_scope() as session:
-        rows = session.scalars(
-            select(Scan).order_by(Scan.created_at.desc()).limit(limit).offset(offset)
-        ).all()
+        stmt = select(Scan).order_by(Scan.created_at.desc()).limit(limit).offset(offset)
+        clause = _scope_clause(client_key)
+        if clause is not None:
+            stmt = stmt.where(clause)
+        rows = session.scalars(stmt).all()
         return [row.to_dict() for row in rows]
 
 
-def scans_for_host(host: str, limit: int = 10) -> list[dict[str, Any]]:
+def scans_for_host(
+    host: str,
+    limit: int = 10,
+    *,
+    client_key: str | None = None,
+) -> list[dict[str, Any]]:
     """Prior verdicts for one hostname — how a host has scored over time."""
     host = (host or "").lower().strip().rstrip(".")[:255]
     if not host:
         return []
     with session_scope() as session:
-        rows = session.scalars(
+        stmt = (
             select(Scan)
             .where(Scan.host == host)
             .order_by(Scan.created_at.desc())
             .limit(max(1, min(limit, 50)))
-        ).all()
+        )
+        clause = _scope_clause(client_key)
+        if clause is not None:
+            stmt = stmt.where(clause)
+        rows = session.scalars(stmt).all()
         return [row.to_dict() for row in rows]
 
 
-def scan_by_id(scan_id: int) -> dict[str, Any] | None:
-    """Full stored scan payload by primary key, or ``None`` if missing.
+def scan_by_id(scan_id: str, *, client_key: str | None = None) -> dict[str, Any] | None:
+    """Full stored scan payload by public id, or ``None`` if missing.
 
-    Returns ``result_json`` when present (rows written after the schema
-    migration), otherwise falls back to the slim ``to_dict`` row (older rows
-    that pre-date the column).  The analyst uses this to bind tools to
-    server-truth rather than the browser-echoed copy.
+    The integer primary key is not accepted. On the public demo a row is
+    returned only to the client that recorded it.
     """
+    text = str(scan_id or "").strip()
+    if not text:
+        return None
     with session_scope() as session:
-        row = session.get(Scan, int(scan_id))
+        stmt = select(Scan).where(Scan.public_id == text)
+        clause = _scope_clause(client_key)
+        if clause is not None:
+            stmt = stmt.where(clause)
+        row = session.scalars(stmt).first()
         return row.to_full_dict() if row else None
 
 
-def scan_stats(days: int = 30) -> dict[str, Any]:
+def scan_stats(days: int = 30, *, client_key: str | None = None) -> dict[str, Any]:
     """Verdict mix and mean score per day — the drift signal for the deployed model.
 
     Every aggregate is filtered to the window. ``total_scans`` and the verdict
@@ -495,9 +587,16 @@ def scan_stats(days: int = 30) -> dict[str, Any]:
     """
     cutoff = datetime.now(UTC) - timedelta(days=days)
     with session_scope() as session:
-        window = Scan.created_at >= cutoff
+        filters = [Scan.created_at >= cutoff]
+        clause = _scope_clause(client_key)
+        if clause is not None:
+            filters.append(clause)
+        window = and_(*filters)
         total = session.scalar(select(func.count(Scan.id)).where(window)) or 0
-        all_time = session.scalar(select(func.count(Scan.id))) or 0
+        all_time_stmt = select(func.count(Scan.id))
+        if clause is not None:
+            all_time_stmt = all_time_stmt.where(clause)
+        all_time = session.scalar(all_time_stmt) or 0
 
         verdicts = session.execute(
             select(Scan.verdict, func.count(Scan.id)).where(window).group_by(Scan.verdict)
@@ -587,7 +686,7 @@ def update_scan_job(
     job_id: str,
     *,
     status: str,
-    scan_id: int | None = None,
+    scan_id: str | None = None,
     error: str | None = None,
 ) -> None:
     with session_scope() as session:

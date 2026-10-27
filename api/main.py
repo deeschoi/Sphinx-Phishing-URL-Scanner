@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -53,6 +54,15 @@ app = FastAPI(
     version="1.1.0",
     lifespan=lifespan,
 )
+
+
+def _public_scan_id(value: object) -> str | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return str(uuid.UUID(str(value).strip()))
+    except (ValueError, AttributeError, TypeError):
+        return None
 
 
 class ScanRequest(BaseModel):
@@ -312,7 +322,7 @@ class ScanPayload(BaseModel):
     warnings: list[WarningPayload] = Field(default_factory=list)
     coverage: CoveragePayload | None = None
     model_quality: ModelQualityPayload | None = None
-    scan_id: int | None = None
+    scan_id: str | None = None
 
     @field_validator("url", "final_url", mode="before")
     @classmethod
@@ -392,8 +402,8 @@ class ScanPayload(BaseModel):
 
     @field_validator("scan_id", mode="before")
     @classmethod
-    def _scan_id(cls, value: object) -> int | None:
-        return _as_int(value)
+    def _scan_id(cls, value: object) -> str | None:
+        return _public_scan_id(value)
 
 
 class ChatRequest(BaseModel):
@@ -417,13 +427,14 @@ def scan_url(request: ScanRequest, http_request: Request) -> dict:
     # two model passes, all on the request threadpool. Both limits are load
     # bearing: the per-caller budget stops one client monopolising the service,
     # and the in-flight cap stops many clients exhausting sockets together.
-    scan_limiter.check(client_key(http_request))
+    caller = client_key(http_request)
+    scan_limiter.check(caller)
     try:
         with scan_limiter.slot():
             started = time.perf_counter()
             result = scan(request.url, timeout=request.timeout)
             duration_ms = int((time.perf_counter() - started) * 1000)
-        result["scan_id"] = record_scan(result, duration_ms=duration_ms)
+        result["scan_id"] = record_scan(result, duration_ms=duration_ms, client_key=caller)
         result["duration_ms"] = duration_ms
         return result
     except HTTPException:
@@ -540,6 +551,7 @@ def chat(
                 request.scan.model_dump(),
                 [message.model_dump() for message in request.messages],
                 api_key=key,
+                client_key=client_key(http_request),
             )
     except AgentUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -586,15 +598,21 @@ def scans(
     """Recent scan history. URLs are stored without credentials or query strings;
     path segments that look like secrets are redacted best-effort.
     """
-    read_limiter.check(client_key(http_request))
-    return {"scans": recent_scans(limit=limit, offset=offset)}
+    caller = client_key(http_request)
+    read_limiter.check(caller)
+    return {"scans": recent_scans(limit=limit, offset=offset, client_key=caller)}
 
 
 @app.get("/api/scans/{scan_id}", dependencies=[Depends(require_api_key)])
-def scan_detail(scan_id: int, http_request: Request) -> dict:
-    """Full stored payload for one scan, for rehydrate and export."""
-    read_limiter.check(client_key(http_request))
-    row = scan_by_id(scan_id)
+def scan_detail(scan_id: str, http_request: Request) -> dict:
+    """Full stored payload for one scan, for rehydrate and export.
+
+    ``scan_id`` is the public UUID. The integer primary key is not accepted.
+    """
+    caller = client_key(http_request)
+    read_limiter.check(caller)
+    public_id = _public_scan_id(scan_id)
+    row = scan_by_id(public_id, client_key=caller) if public_id else None
     if row is None:
         raise HTTPException(status_code=404, detail="Unknown scan.")
     return row
@@ -603,8 +621,9 @@ def scan_detail(scan_id: int, http_request: Request) -> dict:
 @app.get("/api/stats", dependencies=[Depends(require_api_key)])
 def stats(http_request: Request, days: int = Query(30, ge=1, le=365)) -> dict:
     """Verdict mix and mean score per day, for spotting score drift."""
-    read_limiter.check(client_key(http_request))
-    return scan_stats(days=days)
+    caller = client_key(http_request)
+    read_limiter.check(caller)
+    return scan_stats(days=days, client_key=caller)
 
 
 @app.get("/api/health")

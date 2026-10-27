@@ -312,7 +312,7 @@ def test_get_host_history_refuses_a_host_outside_the_conversation(monkeypatch):
 def test_get_host_history_allows_the_host_under_discussion(monkeypatch):
     monkeypatch.setattr(
         "phishing.db.scans_for_host",
-        lambda host, limit=10: [{"host": host}],
+        lambda host, limit=10, **_kwargs: [{"host": host}],
     )
     out = ScanTools(_scan()).get_host_history("example.com")
     assert out["count"] == 1
@@ -465,9 +465,10 @@ def test_malformed_key_is_rejected_before_contacting_groq(monkeypatch):
 
 
 def test_stored_telemetry_overrides_a_lying_client(monkeypatch):
+    stored_id = "11111111-1111-4111-8111-111111111111"
     monkeypatch.setattr(
         "phishing.db.scan_by_id",
-        lambda scan_id: {
+        lambda scan_id, **_kwargs: {
             "id": scan_id,
             "url": "https://stored.example/path",
             "verdict": "phishing",
@@ -477,7 +478,9 @@ def test_stored_telemetry_overrides_a_lying_client(monkeypatch):
     )
     fake = _FakeGroq([{"content": "Because."}])
     monkeypatch.setattr(agent, "_post", fake)
-    lying = _scan(scan_id=7, verdict="legitimate", probability=0.01, url="https://lie.example/")
+    lying = _scan(
+        scan_id=stored_id, verdict="legitimate", probability=0.01, url="https://lie.example/"
+    )
     answer(lying, [{"role": "user", "content": "why?"}], api_key=FAKE_KEY)
     system = fake.sent[0]["messages"][0]["content"]
     assert "Verdict: phishing" in system
@@ -486,11 +489,11 @@ def test_stored_telemetry_overrides_a_lying_client(monkeypatch):
 
 
 def test_unresolvable_scan_id_falls_back_to_the_client_payload(monkeypatch):
-    monkeypatch.setattr("phishing.db.scan_by_id", lambda scan_id: None)
+    monkeypatch.setattr("phishing.db.scan_by_id", lambda scan_id, **_kwargs: None)
     fake = _FakeGroq([{"content": "Because."}])
     monkeypatch.setattr(agent, "_post", fake)
     answer(
-        _scan(scan_id=7, verdict="suspicious"),
+        _scan(scan_id="22222222-2222-4222-8222-222222222222", verdict="suspicious"),
         [{"role": "user", "content": "why?"}],
         api_key=FAKE_KEY,
     )

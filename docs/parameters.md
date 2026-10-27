@@ -77,7 +77,7 @@ Free-hosting suffixes and kit-shaped paths are routing hints, not features. See 
 | `get_features` | Raw values for any of the 48 columns |
 | `get_extraction_warnings` | What could not be measured, and what was substituted |
 | `get_model_card` | Dataset, holdout vs live metrics, thresholds, documented leaks |
-| `get_host_history` | Prior verdicts for the same hostname, from scan telemetry |
+| `get_host_history` | Prior verdicts for the same hostname, from this caller's scan telemetry |
 | `rescan_url` | A fresh scan, through the same SSRF guard, capped per conversation |
 
 ## HTTP API
@@ -92,8 +92,8 @@ Guarded routes require `X-API-Key` when `SPHINX_API_KEY` is set. When it is unse
 | `POST` | `/api/scan/batch` | guarded | `{ "urls": [...], "timeout"? }` (cap is `SPHINX_BATCH_MAX_URLS` clamped to the per-minute scan budget; one rate-limit slot per URL) |
 | `GET` | `/api/scan/batch/{id}` | guarded | Per-URL status plus a rollup |
 | `POST` | `/api/chat` | guarded | Scan already returned. Optional `X-Groq-Api-Key`. |
-| `GET` | `/api/scans` | guarded | `limit` (1–200, default 50), `offset` |
-| `GET` | `/api/scans/{id}` | guarded | Full stored payload (`to_full_dict`) |
+| `GET` | `/api/scans` | guarded | `limit` (1–200, default 50), `offset`. On the public demo, only the caller's rows |
+| `GET` | `/api/scans/{id}` | guarded | Full stored payload by public id (`to_full_dict`) |
 | `GET` | `/api/stats` | guarded | `days` (7 / 30 / 90) |
 | `GET` | `/api/agent` | public | Whether chat needs a visitor Groq key |
 | `GET` | `/api/model` | public | Feature lists, holdout + live metrics, thresholds |

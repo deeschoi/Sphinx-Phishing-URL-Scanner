@@ -127,6 +127,8 @@ phishing scan --tier A https://example.com   # URL string only, no network fetch
 | `SPHINX_BATCH_MAX_URLS` | `25` | Cap on `POST /api/scan/batch`, clamped to `SPHINX_SCAN_RATE_PER_MINUTE` (a batch of N spends N) |
 | `SPHINX_TRUST_PROXY_HEADERS` | `0` | Honour `X-Forwarded-For` only behind a proxy you control |
 
+When `SPHINX_ALLOW_ANONYMOUS` is the public opt-in (`1` / `all`) and no API key is set, history and stats are limited to the calling client. A configured API key is one tenant and sees every row. Scan ids in the API are random, not the database counter.
+
 `POST /api/scan` fetches a caller-chosen URL. Keep the rate limits, bind behind a reverse proxy (compose already binds `127.0.0.1:8000`), leave `SPHINX_ALLOW_ANONYMOUS` at its `loopback` default unless the service is intentionally public, and omit `GROQ_API_KEY` on public hosts.
 
 ## Train, test, and research scripts

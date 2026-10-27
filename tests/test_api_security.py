@@ -327,7 +327,7 @@ def test_chat_returns_503_when_neither_key_is_present(client, monkeypatch):
 def test_chat_uses_the_request_header_key(client, monkeypatch):
     seen: dict[str, str] = {}
 
-    def fake_answer(scan, messages, *, api_key="", model=None):
+    def fake_answer(scan, messages, *, api_key="", model=None, client_key=""):
         seen["api_key"] = api_key
         return {"reply": "ok", "tools_used": [], "model": "fake"}
 
@@ -410,7 +410,7 @@ def test_unknown_scan_keys_are_ignored(client, monkeypatch):
 def test_an_oversized_scan_payload_does_not_hang_or_500(client, monkeypatch):
     seen: dict[str, int] = {}
 
-    def fake_answer(scan, messages, *, api_key="", model=None):
+    def fake_answer(scan, messages, *, api_key="", model=None, client_key=""):
         seen["n_signals"] = len(scan.get("signals") or [])
         return {"reply": "ok", "tools_used": [], "model": "fake"}
 
