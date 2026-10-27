@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlparse
 
@@ -26,6 +27,15 @@ MAX_REDIRECTS = 8
 REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
 
 
+class FetchDeadline(TimeoutError):
+    """The wall-clock budget for the whole fetch was spent.
+
+    ``requests`` resets its read timeout on every body chunk, so a target that
+    drips one byte forever would otherwise hold a scan slot until the process
+    restarts. The deadline is checked between chunks and between redirects.
+    """
+
+
 @dataclass
 class FetchResult:
     url: str
@@ -42,12 +52,14 @@ class FetchResult:
     truncated: bool = False
 
 
-def _read_capped(response, max_bytes: int) -> tuple[bytes, bool]:
-    """Read at most ``max_bytes``, reporting whether the body was cut short."""
+def _read_capped(response, max_bytes: int, deadline: float) -> tuple[bytes, bool]:
+    """Read at most ``max_bytes``, and never past ``deadline``."""
     chunks: list[bytes] = []
     size = 0
     truncated = False
     for chunk in response.iter_content(chunk_size=8192):
+        if time.monotonic() >= deadline:
+            raise FetchDeadline("fetch exceeded the time budget")
         if not chunk:
             continue
         size += len(chunk)
@@ -83,13 +95,19 @@ def fetch_page(
     headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}
     history: list[str] = []
     current = start_url
+    budget = max(float(timeout), 0.1)
+    deadline = time.monotonic() + budget
     try:
         for _ in range(MAX_REDIRECTS + 1):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise FetchDeadline("fetch exceeded the time budget")
             assert_public_url(current)
+            hop = min(budget, remaining)
             resp = session.get(
                 current,
                 headers=headers,
-                timeout=timeout,
+                timeout=(hop, hop),
                 allow_redirects=False,
                 stream=True,
             )
@@ -105,7 +123,7 @@ def fetch_page(
                 current = nxt
                 continue
 
-            raw, truncated = _read_capped(resp, max_bytes)
+            raw, truncated = _read_capped(resp, max_bytes, deadline)
             content_type = resp.headers.get("Content-Type", "")
             html = raw.decode(resp.encoding or "utf-8", errors="replace")
             ok = 200 <= resp.status_code < 300

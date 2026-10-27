@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+import time
 
 import requests
 
@@ -111,6 +112,38 @@ def test_fetch_page_reports_non_2xx_as_a_failed_fetch(monkeypatch):
     assert result.soup is None
     assert result.html == ""
     assert result.error_kind == "http"
+
+
+def test_fetch_page_aborts_a_slow_drip(monkeypatch):
+    """A body that never ends must not hold the scan past the wall-clock budget."""
+
+    class Resp:
+        status_code = 200
+        headers = {"Content-Type": "text/html"}
+        encoding = "utf-8"
+
+        def iter_content(self, chunk_size=8192):
+            while True:
+                time.sleep(0.05)
+                yield b"x"
+
+        def close(self):
+            pass
+
+    class Session:
+        def get(self, *args, **kwargs):
+            return Resp()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("phishing.features.fetch.assert_public_url", lambda url: None)
+    monkeypatch.setattr("phishing.features.fetch.guarded_session", Session)
+    started = time.monotonic()
+    result = fetch_page("https://example.com/", timeout=1)
+    assert time.monotonic() - started < 2
+    assert result.ok is False
+    assert result.error_kind == "timeout"
 
 
 def _failed_fetch(kind: str) -> FetchResult:
