@@ -42,6 +42,9 @@ TRUSTED_ISSUERS = (
 
 PREFERRED_CLOSED_PORTS = {21, 22, 23, 445, 1433, 1521, 3306, 3389}
 PREFERRED_OPEN_PORTS = {80, 443}
+# The legacy TLS probe opens its own socket, outside the guarded HTTP adapter.
+# Keep it on the ports a certificate check is actually for.
+_TLS_PORTS = frozenset({443, 8443})
 
 
 def _host_port(url: str) -> tuple[str, int | None, str]:
@@ -66,11 +69,32 @@ def ssl_final_state(url: str, warnings: list[FeatureWarning]) -> tuple[int, bool
     if scheme != "https":
         return PHISHING, False
     port = port or 443
+    if port not in _TLS_PORTS:
+        warnings.append(
+            FeatureWarning(
+                "SSLfinal_State",
+                f"refusing TLS probe to port {port}",
+                PHISHING,
+            )
+        )
+        return PHISHING, False
+    from phishing.netguard import UnsafeTargetError, _assert_public_peer, assert_public_url
+
+    literal_host = f"[{host}]" if ":" in host else host
+    try:
+        assert_public_url(f"https://{literal_host}:{port}/")
+    except UnsafeTargetError as exc:
+        warnings.append(FeatureWarning("SSLfinal_State", str(exc), PHISHING))
+        return PHISHING, False
     try:
         ctx = ssl.create_default_context()
         with socket.create_connection((host, port), timeout=8) as sock:
+            _assert_public_peer(sock)
             with ctx.wrap_socket(sock, server_hostname=host) as ssock:
                 cert = ssock.getpeercert()
+    except UnsafeTargetError as exc:
+        warnings.append(FeatureWarning("SSLfinal_State", str(exc), PHISHING))
+        return PHISHING, False
     except Exception as exc:  # noqa: BLE001
         warnings.append(
             FeatureWarning("SSLfinal_State", f"TLS handshake failed: {exc}", PHISHING)

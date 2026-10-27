@@ -171,3 +171,25 @@ def test_socket_guard_catches_a_rebind_after_the_url_check(monkeypatch):
     with _LocalServer() as server:
         with pytest.raises(UnsafeTargetError):
             fetch_page(server.url("/secret"), timeout=4)
+
+
+def test_legacy_tls_probe_does_not_dial_loopback_or_odd_ports(monkeypatch):
+    from phishing.config import PHISHING
+    from phishing.features.infra_features import ssl_final_state
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("socket opened")
+
+    monkeypatch.setattr(
+        "phishing.features.infra_features.socket.create_connection", boom
+    )
+    warnings: list = []
+    value, inspected = ssl_final_state("https://127.0.0.1/", warnings)
+    assert value == PHISHING
+    assert inspected is False
+
+    warnings.clear()
+    value, inspected = ssl_final_state("https://example.com:22/", warnings)
+    assert value == PHISHING
+    assert inspected is False
+    assert any("port 22" in warning.message for warning in warnings)
