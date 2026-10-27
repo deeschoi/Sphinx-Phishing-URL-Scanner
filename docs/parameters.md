@@ -101,4 +101,4 @@ Guarded routes require `X-API-Key` when `SPHINX_API_KEY` is set. When it is unse
 | `GET` | `/api/health` | public | Liveness only. Never touches the model or DB |
 | `GET` | `/api/ready` | public | Readiness: model artifact loaded, DB answers, UI built |
 
-`/` and client-side routes (`/batch`, `/history`, `/stats`, `/findings`) serve the built React app. OpenAPI is at `/docs`.
+`/` and client-side routes (`/batch`, `/history`, `/stats`, `/findings`) serve the built React app. OpenAPI is off unless `SPHINX_ENABLE_DOCS=1`, in which case it is at `/docs`. Responses carry a content-security policy, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`. Scan, chat, and stats responses are `Cache-Control: no-store`.

@@ -32,7 +32,7 @@ The web app has five sections:
 
 Chat is an explanation layer over a scan that already happened. Scans never need Groq. If the server has no `GROQ_API_KEY`, the panel asks for a visitor key.
 
-There is also a CLI (`phishing scan`) and an HTTP API (`POST /api/scan`, `POST /api/scan/jobs`, `POST /api/scan/batch`, OpenAPI at `/docs`). Route table and payload fields: [docs/parameters.md](docs/parameters.md).
+There is also a CLI (`phishing scan`) and an HTTP API (`POST /api/scan`, `POST /api/scan/jobs`, `POST /api/scan/batch`; OpenAPI at `/docs` when `SPHINX_ENABLE_DOCS=1`). Route table and payload fields: [docs/parameters.md](docs/parameters.md).
 
 ## Public demo (Render)
 
@@ -126,6 +126,7 @@ phishing scan --tier A https://example.com   # URL string only, no network fetch
 | `SPHINX_JOB_WORKERS` | same as `SPHINX_SCAN_MAX_CONCURRENT` | In-flight async scan jobs |
 | `SPHINX_JOB_QUEUE_MAX` | `32` | Jobs waiting behind those workers. Past this, enqueue returns 503 |
 | `SPHINX_BATCH_MAX_URLS` | `25` | Cap on `POST /api/scan/batch`, clamped to `SPHINX_SCAN_RATE_PER_MINUTE` (a batch of N spends N) |
+| `SPHINX_ENABLE_DOCS` | unset | Set to `1` to publish `/docs`. Off by default |
 | `SPHINX_TRUST_PROXY_HEADERS` | `0` | Honour `X-Forwarded-For` only behind a proxy you control |
 
 When `SPHINX_ALLOW_ANONYMOUS` is the public opt-in (`1` / `all`) and no API key is set, history and stats are limited to the calling client. A configured API key is one tenant and sees every row. Scan ids in the API are random, not the database counter.

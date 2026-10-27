@@ -273,6 +273,34 @@ def test_health_is_liveness_only(client):
     assert client.get("/api/health").json() == {"status": "ok"}
 
 
+def test_security_headers_and_hidden_docs(client):
+    response = client.get("/api/health")
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert "strict-transport-security" not in response.headers
+    assert "cache-control" not in response.headers
+
+    secured = client.get("/api/health", headers={"X-Forwarded-Proto": "https"})
+    assert "max-age=31536000" in secured.headers["strict-transport-security"]
+
+    scans = client.get("/api/scans")
+    assert scans.headers["cache-control"] == "no-store"
+    assert client.get("/docs").status_code == 404
+    assert client.get("/openapi.json").status_code == 404
+
+
+def test_readiness_hides_exception_text(client, monkeypatch):
+    def boom():
+        raise RuntimeError("password=supersecret")
+
+    monkeypatch.setattr("phishing.db.session_scope", boom)
+    response = client.get("/api/ready")
+    assert response.status_code == 503
+    assert "supersecret" not in response.text
+    assert "RuntimeError" in response.text
+
+
 def test_readiness_reports_not_ready_without_a_model(client, monkeypatch):
     monkeypatch.setattr("api.main.available_models", dict)
     response = client.get("/api/ready")

@@ -42,9 +42,16 @@ from phishing.jobs import (
 )
 from phishing.netguard import UnsafeTargetError
 from phishing.scanner import available_models, research_findings, scan
-from phishing.settings import BATCH_MAX_URLS, GROQ_MODEL, groq_api_key
+from phishing.settings import BATCH_MAX_URLS, GROQ_MODEL, env_bool, groq_api_key
 
 log = logging.getLogger(__name__)
+_DOCS_ENABLED = env_bool("SPHINX_ENABLE_DOCS")
+_SECURITY_CSP = (
+    "default-src 'self'; connect-src 'self'; img-src 'self' data:; "
+    "style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; "
+    "base-uri 'none'; object-src 'none'"
+)
+_NO_STORE_PREFIXES = ("/api/scan", "/api/chat", "/api/stats")
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST_DIR = ROOT / "web" / "dist"
@@ -75,15 +82,26 @@ app = FastAPI(
                 "model trained on the PhiUSIIL 2023 URL dataset.",
     version="1.1.0",
     lifespan=lifespan,
+    docs_url="/docs" if _DOCS_ENABLED else None,
+    redoc_url="/redoc" if _DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if _DOCS_ENABLED else None,
 )
 
 
-def _queue_full() -> HTTPException:
-    return HTTPException(
-        status_code=503,
-        detail="Too many scans queued. Try again in a moment.",
-        headers={"Retry-After": "5"},
-    )
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = _SECURITY_CSP
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if request.url.path.startswith(_NO_STORE_PREFIXES):
+        response.headers["Cache-Control"] = "no-store"
+    forwarded = request.headers.get("x-forwarded-proto", "")
+    if request.url.scheme == "https" or forwarded.split(",")[0].strip() == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 
 def _public_scan_id(value: object) -> str | None:
@@ -93,6 +111,14 @@ def _public_scan_id(value: object) -> str | None:
         return str(uuid.UUID(str(value).strip()))
     except (ValueError, AttributeError, TypeError):
         return None
+
+
+def _queue_full() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail="Too many scans queued. Try again in a moment.",
+        headers={"Retry-After": "5"},
+    )
 
 
 class ScanRequest(BaseModel):
@@ -687,7 +713,8 @@ def ready() -> dict:
             checks["model_error"] = "No trained model artifact. Run: phishing train"
     except Exception as exc:  # noqa: BLE001 — readiness reports, never raises
         ok = False
-        checks["model_error"] = f"{type(exc).__name__}: {exc}"
+        log.exception("readiness model check failed")
+        checks["model_error"] = type(exc).__name__
 
     try:
         from sqlalchemy import text
@@ -699,7 +726,8 @@ def ready() -> dict:
         checks["database"] = "ok"
     except Exception as exc:  # noqa: BLE001 — readiness reports, never raises
         ok = False
-        checks["database"] = f"{type(exc).__name__}: {exc}"
+        log.exception("readiness database check failed")
+        checks["database"] = type(exc).__name__
 
     checks["frontend"] = "built" if (DIST_DIR / "index.html").is_file() else "not built"
     checks["analyst"] = "server_key" if groq_api_key() else "byok"
