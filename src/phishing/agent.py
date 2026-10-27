@@ -595,7 +595,8 @@ TOOLS: list[dict[str, Any]] = [
                 "Run a fresh Sphinx scan of a URL and return its verdict. Use only "
                 "when the user asks about a different URL, or asks to re-check this "
                 "one. This makes a real outbound HTTP request; it is capped per "
-                "conversation. Private and local addresses are refused."
+                "conversation and spends the caller's scan rate limit. Private and "
+                "local addresses are refused."
             ),
             "parameters": {
                 "type": "object",
@@ -863,8 +864,16 @@ class ScanTools:
                 )
             }
         self.rescans += 1
+        from fastapi import HTTPException
+
+        from api.security import scan_limiter
+
         try:
-            fresh = scan(url, timeout=8)
+            scan_limiter.check(self.client_key or "chat-rescan")
+            with scan_limiter.slot():
+                fresh = scan(url, timeout=8)
+        except HTTPException as exc:
+            return {"error": str(exc.detail)}
         except UnsafeTargetError as exc:
             return {"error": f"Refused: {exc}"}
         except ValueError as exc:

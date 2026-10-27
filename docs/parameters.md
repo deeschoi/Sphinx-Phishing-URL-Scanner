@@ -78,7 +78,7 @@ Free-hosting suffixes and kit-shaped paths are routing hints, not features. See 
 | `get_extraction_warnings` | What could not be measured, and what was substituted |
 | `get_model_card` | Dataset, holdout vs live metrics, thresholds, documented leaks |
 | `get_host_history` | Prior verdicts for the same hostname, from this caller's scan telemetry |
-| `rescan_url` | A fresh scan, through the same SSRF guard, capped per conversation |
+| `rescan_url` | A fresh scan, through the same SSRF guard, capped per conversation and by the scan rate limit |
 
 ## HTTP API
 

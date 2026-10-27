@@ -258,6 +258,17 @@ def test_rescan_is_capped_per_conversation(monkeypatch):
     assert "Rescan limit reached" in tools.rescan_url("https://example.com")["error"]
 
 
+def test_rescan_reports_a_rate_limit_instead_of_failing(monkeypatch):
+    from fastapi import HTTPException
+
+    def refuse(*_args, **_kwargs):
+        raise HTTPException(status_code=429, detail="Rate limit reached.")
+
+    monkeypatch.setattr("api.security.scan_limiter.check", refuse)
+    out = ScanTools(_scan()).rescan_url("https://example.com/")
+    assert "Rate limit" in out["error"]
+
+
 def test_rescan_reports_a_refused_target_instead_of_failing(monkeypatch):
     from phishing.netguard import UnsafeTargetError
 
