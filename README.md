@@ -69,7 +69,7 @@ Python 3.11+ (3.12 matches the Docker image).
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-pip install -e .
+pip install -e ".[dev]"
 
 # train the served model if artifacts/model.joblib is missing
 phishing train

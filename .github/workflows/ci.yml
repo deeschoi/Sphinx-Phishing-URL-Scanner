@@ -39,7 +39,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install -e .
+          pip install -e ".[dev]"
 
       - name: Test
         run: pytest -m "not network" -q
@@ -79,7 +79,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install -e .
+          pip install -e ".[dev]"
 
       - name: Import every entry point
         run: python scripts/check_imports.py
@@ -193,7 +193,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install -e .
+          pip install -e ".[dev]"
 
       - name: Train if the artifact is missing
         run: |

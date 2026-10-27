@@ -92,10 +92,7 @@ function scanResult(overrides: Partial<ScanResult> = {}): ScanResult {
 
 function renderScanner(initial = "/") {
   return render(
-    <MemoryRouter
-      initialEntries={[initial]}
-      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-    >
+    <MemoryRouter initialEntries={[initial]}>
       <Scanner />
     </MemoryRouter>,
   );

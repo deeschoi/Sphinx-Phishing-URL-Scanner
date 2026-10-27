@@ -22,7 +22,7 @@ describe("History", () => {
   it("shows an empty state when the API has no scans", async () => {
     vi.stubGlobal("fetch", vi.fn(() => jsonResponse({ scans: [] })));
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <History />
       </MemoryRouter>,
     );
@@ -52,7 +52,7 @@ describe("History", () => {
       ),
     );
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <History />
       </MemoryRouter>,
     );
@@ -70,7 +70,7 @@ describe("Stats", () => {
       vi.fn(() => jsonResponse({ total_scans: 0, verdicts: {}, daily: [] })),
     );
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <Stats />
       </MemoryRouter>,
     );
@@ -96,7 +96,7 @@ describe("Stats", () => {
       ),
     );
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <Stats />
       </MemoryRouter>,
     );
@@ -158,7 +158,7 @@ describe("EmptyState", () => {
 describe("Layout", () => {
   it("renders the Sphinx wordmark", () => {
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <Layout>
           <p>child</p>
         </Layout>
