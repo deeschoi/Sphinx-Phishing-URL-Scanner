@@ -207,6 +207,17 @@ def test_url_hash_covers_the_unredacted_url(db):
     assert "482913" not in row.url
 
 
+def test_old_scan_jobs_are_purged(db):
+    from datetime import UTC, datetime, timedelta
+
+    job_id = db.create_scan_job("https://example.com/")
+    with db.session_scope() as session:
+        row = session.get(db.ScanJob, job_id)
+        row.created_at = datetime.now(UTC) - timedelta(hours=48)
+    assert db.purge_old_scan_jobs() == 1
+    assert db.get_scan_job(job_id) is None
+
+
 def test_scan_by_id_returns_the_row_or_none(db):
     scan_id = db.record_scan(sample_result())
     row = db.scan_by_id(scan_id)

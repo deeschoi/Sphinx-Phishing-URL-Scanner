@@ -57,6 +57,31 @@ def test_job_lands_done_and_records_a_scan(jobs_env, monkeypatch):
     assert db.scan_by_id(payload["scan_id"])["verdict"] == "legitimate"
 
 
+def test_enqueue_refuses_when_the_queue_is_full(jobs_env, monkeypatch):
+    import threading
+
+    _, jobs = jobs_env
+    monkeypatch.setattr(jobs, "JOB_WORKERS", 1)
+    monkeypatch.setattr(jobs, "JOB_QUEUE_MAX", 1)
+    started = threading.Event()
+    release = threading.Event()
+
+    def block(url, timeout=8):
+        started.set()
+        release.wait(3)
+        return _payload(url)
+
+    monkeypatch.setattr(jobs, "scan", block)
+    try:
+        jobs.enqueue_scan_job("https://example.com/1")
+        assert started.wait(2)
+        jobs.enqueue_scan_job("https://example.com/2")
+        with pytest.raises(jobs.JobQueueFull):
+            jobs.enqueue_scan_job("https://example.com/3")
+    finally:
+        release.set()
+
+
 def test_job_crash_lands_error_not_running(jobs_env, monkeypatch):
     _, jobs = jobs_env
 

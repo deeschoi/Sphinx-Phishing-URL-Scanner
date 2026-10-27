@@ -32,6 +32,7 @@ from sqlalchemy import (
     and_,
     case,
     create_engine,
+    delete,
     func,
     select,
 )
@@ -680,6 +681,14 @@ def list_batch_jobs(batch_id: str) -> list[ScanJob]:
         for row in rows:
             session.expunge(row)
         return list(rows)
+
+
+def purge_old_scan_jobs(max_age_hours: int = 24) -> int:
+    """Delete job rows older than ``max_age_hours``. Returns how many were removed."""
+    cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
+    with session_scope() as session:
+        result = session.execute(delete(ScanJob).where(ScanJob.created_at < cutoff))
+        return int(result.rowcount or 0)
 
 
 def update_scan_job(

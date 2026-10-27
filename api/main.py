@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -23,11 +24,27 @@ from api.security import (
 )
 from phishing.agent import AgentUnavailableError
 from phishing.agent import answer as agent_answer
-from phishing.db import init_db, recent_scans, record_scan, scan_by_id, scan_stats
-from phishing.jobs import batch_status, enqueue_batch, enqueue_scan_job, job_status
+from phishing.db import (
+    init_db,
+    purge_old_scan_jobs,
+    recent_scans,
+    record_scan,
+    scan_by_id,
+    scan_stats,
+)
+from phishing.jobs import (
+    JobQueueFull,
+    batch_status,
+    enqueue_batch,
+    enqueue_scan_job,
+    job_status,
+    shutdown_jobs,
+)
 from phishing.netguard import UnsafeTargetError
 from phishing.scanner import available_models, research_findings, scan
 from phishing.settings import BATCH_MAX_URLS, GROQ_MODEL, groq_api_key
+
+log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST_DIR = ROOT / "web" / "dist"
@@ -44,7 +61,12 @@ MISSING_FRONTEND = """<!doctype html>
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_db()
+    try:
+        purge_old_scan_jobs()
+    except Exception:
+        log.exception("could not purge old scan jobs at startup")
     yield
+    shutdown_jobs()
 
 
 app = FastAPI(
@@ -54,6 +76,14 @@ app = FastAPI(
     version="1.1.0",
     lifespan=lifespan,
 )
+
+
+def _queue_full() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail="Too many scans queued. Try again in a moment.",
+        headers={"Retry-After": "5"},
+    )
 
 
 def _public_scan_id(value: object) -> str | None:
@@ -475,7 +505,10 @@ def create_scan_job(request: ScanRequest, http_request: Request) -> JSONResponse
     """Queue one scan and return immediately. Poll ``GET /api/scan/jobs/{id}``."""
     key = client_key(http_request)
     scan_limiter.check(key)
-    job_id = enqueue_scan_job(request.url, timeout=request.timeout, client_key=key)
+    try:
+        job_id = enqueue_scan_job(request.url, timeout=request.timeout, client_key=key)
+    except JobQueueFull:
+        raise _queue_full() from None
     return JSONResponse({"job_id": job_id}, status_code=202)
 
 
@@ -494,7 +527,10 @@ def create_scan_batch(request: BatchRequest, http_request: Request) -> JSONRespo
     urls = _normalise_batch_urls(request.urls)
     key = client_key(http_request)
     scan_limiter.check(key, cost=len(urls))
-    batch_id, job_ids = enqueue_batch(urls, timeout=request.timeout, client_key=key)
+    try:
+        batch_id, job_ids = enqueue_batch(urls, timeout=request.timeout, client_key=key)
+    except JobQueueFull:
+        raise _queue_full() from None
     return JSONResponse({"batch_id": batch_id, "job_ids": job_ids}, status_code=202)
 
 

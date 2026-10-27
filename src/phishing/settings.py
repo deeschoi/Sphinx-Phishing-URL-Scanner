@@ -67,6 +67,10 @@ SCAN_MAX_CONCURRENT = env_int("SPHINX_SCAN_MAX_CONCURRENT", 4)
 # their sum: SCAN_MAX_CONCURRENT (sync /api/scan) + JOB_WORKERS (jobs + batch).
 # Size both together when provisioning — the sum is what has to fit the host.
 JOB_WORKERS = max(1, env_int("SPHINX_JOB_WORKERS", SCAN_MAX_CONCURRENT))
+# How many jobs may sit queued behind the workers. Past this, enqueue returns
+# 503 instead of spawning unbounded threads. Running jobs are not part of it:
+# the ceiling on accepted-but-unfinished jobs is JOB_WORKERS + JOB_QUEUE_MAX.
+JOB_QUEUE_MAX = max(1, env_int("SPHINX_JOB_QUEUE_MAX", 32))
 # A batch of N spends N from the per-minute scan budget as one all-or-nothing
 # charge, so a cap above that budget is unreachable: every batch larger than
 # SCAN_RATE_PER_MINUTE would 429 even on a completely idle window. Clamp so the

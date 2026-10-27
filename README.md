@@ -124,6 +124,7 @@ phishing scan --tier A https://example.com   # URL string only, no network fetch
 | `GROQ_API_KEY` | unset | Optional operator fallback. Omit on a public host; visitors can still send `X-Groq-Api-Key` |
 | `PHISHING_DATABASE_URL` | SQLite under `data/` | Scan telemetry. Point at Postgres for compose `--profile postgres`, or attach a Render disk at `/app/data` so History survives replaces |
 | `SPHINX_JOB_WORKERS` | same as `SPHINX_SCAN_MAX_CONCURRENT` | In-flight async scan jobs |
+| `SPHINX_JOB_QUEUE_MAX` | `32` | Jobs waiting behind those workers. Past this, enqueue returns 503 |
 | `SPHINX_BATCH_MAX_URLS` | `25` | Cap on `POST /api/scan/batch`, clamped to `SPHINX_SCAN_RATE_PER_MINUTE` (a batch of N spends N) |
 | `SPHINX_TRUST_PROXY_HEADERS` | `0` | Honour `X-Forwarded-For` only behind a proxy you control |
 
