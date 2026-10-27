@@ -2,7 +2,7 @@
 # keeps the image self-contained and reproducible from source alone: the model
 # always matches the code and dataset in the same commit. The React UI is built
 # in a separate Node stage and copied into the runtime image as static files.
-FROM python:3.12-slim AS builder
+FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -31,7 +31,7 @@ RUN pip install . --no-deps
 RUN python scripts/06_train_final.py
 
 
-FROM node:22-alpine AS frontend
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS frontend
 
 WORKDIR /web
 
@@ -42,7 +42,7 @@ COPY web/ ./
 RUN npm run build
 
 
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -52,7 +52,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 curl gosu \
+    && apt-get install -y --no-install-recommends libgomp1 gosu \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 scanner
 
@@ -86,7 +86,8 @@ EXPOSE 8000
 # and no database, so an unhealthy instance kept receiving traffic and 503ing
 # every scan. /api/ready loads the artifact and pings the database.
 # Shell form so $PORT expands; JSON exec form would keep 8000 forever.
+# Python, not curl: the runtime image does not ship a second HTTP client.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:${PORT:-8000}/api/ready || exit 1
+    CMD python -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8000')+'/api/ready', timeout=4)"
 
 CMD ["sh", "-c", "exec uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

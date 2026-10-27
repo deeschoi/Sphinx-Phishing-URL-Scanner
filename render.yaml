@@ -30,6 +30,7 @@ services:
       - key: SPHINX_TRUST_PROXY_HEADERS
         value: "1"
       # The demo is intentionally anonymous; rate limits are the control.
+      # History and stats are then limited to each visitor's address.
       # Render also injects RENDER=true, which the API treats as the same
       # opt-in when this variable is missing. Set it here anyway so a
       # dashboard-created service matches the Blueprint without a rebuild.
