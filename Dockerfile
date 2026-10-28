@@ -30,6 +30,13 @@ RUN pip install . --no-deps
 # Produces artifacts/model.joblib and reports/06_model_card.json.
 RUN python scripts/06_train_final.py
 
+# pip is only needed to build the venv. A current pip vendors msgpack 1.1.2,
+# urllib3 2.7.0, and setuptools 70.3.0, which the image scan rejects. The
+# runtime process never installs packages.
+RUN rm -rf /opt/venv/lib/python3.12/site-packages/pip \
+           /opt/venv/lib/python3.12/site-packages/pip-*.dist-info \
+    && rm -f /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.12
+
 
 FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS frontend
 
@@ -54,6 +61,10 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 gosu \
     && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /usr/local/lib/python3.12/site-packages/pip \
+              /usr/local/lib/python3.12/site-packages/pip-*.dist-info \
+              /usr/local/lib/python3.12/ensurepip \
+    && rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.12 \
     && useradd --create-home --uid 10001 scanner
 
 COPY --from=builder /opt/venv /opt/venv
