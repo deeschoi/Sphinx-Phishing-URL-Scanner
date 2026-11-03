@@ -262,3 +262,109 @@ def test_maintenance_times_out_a_stuck_running_job(jobs_env):
     assert db.get_scan_job(job_id).status == "error"
     assert db.get_scan_job(job_id).error == "Scan timed out."
     assert db.fail_stale_running_jobs() == 0
+
+
+def _qstash_signature(body: str, url: str, key: str) -> str:
+    import base64
+    import hashlib
+    import time
+
+    import jwt
+
+    digest = base64.urlsafe_b64encode(hashlib.sha256(body.encode()).digest()).decode()
+    digest = digest.rstrip("=")
+    now = int(time.time())
+    token = jwt.encode(
+        {
+            "iss": "Upstash",
+            "sub": url,
+            "exp": now + 120,
+            "nbf": now - 30,
+            "body": digest,
+        },
+        key,
+        algorithm="HS256",
+    )
+    return token if isinstance(token, str) else token.decode()
+
+
+def test_worker_route_rejects_a_bad_signature_and_runs_a_good_one(jobs_env, monkeypatch):
+    db, jobs = jobs_env
+    import api.main as api_main
+
+    importlib.reload(api_main)
+    monkeypatch.setattr(jobs, "scan", lambda url, timeout=8: _payload(url))
+    url = "https://sphinx.example/api/internal/scan-jobs/run"
+    monkeypatch.setenv("SPHINX_WORKER_URL", url)
+    monkeypatch.setenv("QSTASH_CURRENT_SIGNING_KEY", "current-signing-key-0123456789abcd")
+    monkeypatch.setenv("QSTASH_NEXT_SIGNING_KEY", "next-signing-key-0123456789abcdef")
+    job_id = db.create_scan_job("https://example.com", client_key="9.9.9.9")
+    import json
+
+    body = json.dumps({"job_id": job_id}, separators=(",", ":"))
+
+    with make_client(api_main.app) as client:
+        unsigned = client.post(
+            "/api/internal/scan-jobs/run",
+            content=body,
+            headers={"Content-Type": "application/json"},
+        )
+        assert unsigned.status_code == 401
+
+        forged = client.post(
+            "/api/internal/scan-jobs/run",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "Upstash-Signature": _qstash_signature(
+                    body, url, "wrong-signing-key-0123456789abcd"
+                ),
+            },
+        )
+        assert forged.status_code == 401
+
+        signed = client.post(
+            "/api/internal/scan-jobs/run",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "Upstash-Signature": _qstash_signature(
+                    body, url, "next-signing-key-0123456789abcdef"
+                ),
+            },
+        )
+        assert signed.status_code == 200
+        assert signed.json()["status"] == "done"
+        again = client.post(
+            "/api/internal/scan-jobs/run",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "Upstash-Signature": _qstash_signature(
+                    body, url, "current-signing-key-0123456789abcd"
+                ),
+            },
+        )
+        assert again.status_code == 200
+        assert again.json()["status"] == "ignored"
+
+
+def test_maintenance_route_requires_the_cron_secret(jobs_env, monkeypatch):
+    db, _jobs = jobs_env
+    import api.main as api_main
+
+    importlib.reload(api_main)
+    monkeypatch.setenv("CRON_SECRET", "cron-secret")
+    with make_client(api_main.app) as client:
+        assert client.get("/api/internal/maintenance").status_code == 401
+        assert client.post("/api/internal/maintenance").status_code == 401
+        ok = client.get(
+            "/api/internal/maintenance",
+            headers={"Authorization": "Bearer cron-secret"},
+        )
+        assert ok.status_code == 200
+        assert ok.json()["timed_out"] == 0
+        assert "timed_out" in ok.json()
+    # The secret is read from the environment, not from the reloaded module's
+    # import-time copy. db is referenced so the fixture stays meaningful.
+    assert db.get_scan_job("missing") is None

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hmac
+import json
 import logging
 import time
 import uuid
@@ -25,6 +27,7 @@ from api.security import (
 from phishing.agent import AgentUnavailableError
 from phishing.agent import answer as agent_answer
 from phishing.db import (
+    fail_stale_running_jobs,
     init_db,
     purge_old_scan_jobs,
     recent_scans,
@@ -33,21 +36,26 @@ from phishing.db import (
     scan_stats,
 )
 from phishing.jobs import (
+    InvalidWorkerSignature,
     JobPublishError,
     JobQueueFull,
     batch_status,
     enqueue_batch,
     enqueue_scan_job,
     job_status,
+    run_queued_job,
     shutdown_jobs,
+    verify_worker_signature,
 )
 from phishing.netguard import UnsafeTargetError
 from phishing.scanner import available_models, research_findings, scan
 from phishing.settings import (
     BATCH_MAX_URLS,
     GROQ_MODEL,
+    env,
     env_bool,
     groq_api_key,
+    job_backend,
     rate_limit_backend,
     serverless,
 )
@@ -59,7 +67,7 @@ _SECURITY_CSP = (
     "style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; "
     "base-uri 'none'; object-src 'none'"
 )
-_NO_STORE_PREFIXES = ("/api/scan", "/api/chat", "/api/stats")
+_NO_STORE_PREFIXES = ("/api/scan", "/api/chat", "/api/stats", "/api/internal")
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST_DIR = ROOT / "web" / "dist"
@@ -582,6 +590,59 @@ def create_scan_batch(request: BatchRequest, http_request: Request) -> JSONRespo
     return JSONResponse({"batch_id": batch_id, "job_ids": job_ids}, status_code=202)
 
 
+@app.post("/api/internal/scan-jobs/run")
+async def run_published_scan_job(request: Request) -> dict:
+    """QStash worker. The signature is the auth; there is no API key or rate limit.
+
+    The body is a job id. The URL is loaded from that row. A scan that fails
+    is stored as ``error`` and this still returns 200, so QStash does not
+    fetch the target again.
+    """
+    body = await request.body()
+    signature = request.headers.get("upstash-signature", "")
+    try:
+        verify_worker_signature(body, signature)
+    except InvalidWorkerSignature:
+        raise HTTPException(status_code=401, detail="Invalid signature.") from None
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid job payload.") from None
+    job_id = payload.get("job_id") if isinstance(payload, dict) else None
+    if not isinstance(job_id, str) or _public_scan_id(job_id) is None:
+        raise HTTPException(status_code=400, detail="Invalid job id.")
+    return {"job_id": job_id, "status": run_queued_job(job_id)}
+
+
+def _require_cron(request: Request) -> None:
+    secret = env("CRON_SECRET", "").strip()
+    header = request.headers.get("authorization", "")
+    if not secret:
+        raise HTTPException(status_code=401, detail="CRON_SECRET is not configured.")
+    try:
+        match = hmac.compare_digest(header, f"Bearer {secret}")
+    except (TypeError, ValueError):
+        match = False
+    if not match:
+        raise HTTPException(status_code=401, detail="Invalid cron secret.")
+
+
+@app.api_route("/api/internal/maintenance", methods=["GET", "POST"])
+def maintain_scan_jobs(request: Request) -> dict:
+    """Time out stuck jobs and delete old ones.
+
+    Vercel Cron calls GET. POST is the same work for a manual trigger.
+    """
+    _require_cron(request)
+    timed_out = fail_stale_running_jobs()
+    try:
+        purged = purge_old_scan_jobs()
+    except Exception:
+        log.exception("could not purge old scan jobs")
+        purged = 0
+    return {"timed_out": timed_out, "purged": purged}
+
+
 @app.get("/api/scan/batch/{batch_id}", dependencies=[Depends(require_api_key)])
 def read_scan_batch(batch_id: str, http_request: Request) -> dict:
     read_limiter.check(client_key(http_request))
@@ -752,7 +813,13 @@ def ready() -> dict:
         checks["database"] = type(exc).__name__
 
     checks["rate_limit"] = rate_limit_backend()
-    checks["frontend"] = "built" if (DIST_DIR / "index.html").is_file() else "not built"
+    checks["jobs"] = job_backend()
+    if serverless():
+        # The CDN serves web/dist. A missing index.html in the bundle is not
+        # a failed instance.
+        checks["frontend"] = "cdn"
+    else:
+        checks["frontend"] = "built" if (DIST_DIR / "index.html").is_file() else "not built"
     checks["analyst"] = "server_key" if groq_api_key() else "byok"
     if rate_limit_backend() == "redis":
         try:
