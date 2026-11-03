@@ -6,9 +6,8 @@ import ipaddress
 import re
 from urllib.parse import urlparse
 
-import tldextract
-
 from phishing.config import LEGITIMATE, PHISHING, SUSPICIOUS
+from phishing.features.public_suffix import extract as suffix_extract
 
 SHORTENERS = {
     "bit.ly",
@@ -139,7 +138,7 @@ def double_slash_redirecting(url: str) -> int:
 
 
 def prefix_suffix(url: str) -> int:
-    ext = tldextract.extract(url)
+    ext = suffix_extract(url)
     domain = ext.domain or ""
     return PHISHING if "-" in domain else LEGITIMATE
 
@@ -149,7 +148,7 @@ def having_sub_domain(url: str) -> int:
 
     0 extra labels → legitimate, 1 → suspicious, 2+ → phishing.
     """
-    ext = tldextract.extract(url)
+    ext = suffix_extract(url)
     sub = ext.subdomain.lower()
     labels = [p for p in sub.split(".") if p and p != "www"]
     if len(labels) == 0:
@@ -160,7 +159,7 @@ def having_sub_domain(url: str) -> int:
 
 
 def https_token(url: str) -> int:
-    ext = tldextract.extract(url)
+    ext = suffix_extract(url)
     host_labels = ".".join(
         p for p in (ext.subdomain, ext.domain) if p
     ).lower()

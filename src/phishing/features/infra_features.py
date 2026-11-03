@@ -7,9 +7,8 @@ import ssl
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 
-import tldextract
-
 from phishing.config import LEGITIMATE, PHISHING, SUSPICIOUS, UNAVAILABLE_2026
+from phishing.features.public_suffix import extract as suffix_extract
 from phishing.schema import FeatureWarning
 
 # Original 2012 paper list plus CAs that actually issue certificates in 2026.
@@ -56,7 +55,7 @@ def _host_port(url: str) -> tuple[str, int | None, str]:
 
 
 def _registered(url: str) -> str:
-    ext = tldextract.extract(url)
+    ext = suffix_extract(url)
     if not ext.domain:
         return ""
     return f"{ext.domain}.{ext.suffix}".lower() if ext.suffix else ext.domain.lower()

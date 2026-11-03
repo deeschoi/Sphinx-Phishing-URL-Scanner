@@ -5,11 +5,11 @@ from __future__ import annotations
 import re
 from urllib.parse import urljoin
 
-import tldextract
 from bs4 import BeautifulSoup
 
 from phishing.config import LEGITIMATE, PHISHING, SUSPICIOUS
 from phishing.features.fetch import FetchResult
+from phishing.features.public_suffix import extract as suffix_extract
 
 _MAILTO = re.compile(r"mailto:", re.I)
 _MAIL_FN = re.compile(r"\bmail\s*\(", re.I)
@@ -21,7 +21,7 @@ _EMPTY_ANCHOR = re.compile(r"^(#|javascript:|)$", re.I)
 
 
 def _registered(url: str) -> str:
-    ext = tldextract.extract(url)
+    ext = suffix_extract(url)
     if not ext.domain:
         return ""
     return f"{ext.domain}.{ext.suffix}".lower() if ext.suffix else ext.domain.lower()

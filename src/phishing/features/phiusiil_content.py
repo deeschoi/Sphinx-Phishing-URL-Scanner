@@ -10,10 +10,10 @@ from __future__ import annotations
 import re
 from urllib.parse import urljoin, urlparse
 
-import tldextract
 from bs4 import BeautifulSoup
 
 from phishing.features.fetch import FetchResult
+from phishing.features.public_suffix import extract as suffix_extract
 
 _POPUP = re.compile(r"window\.open\s*\(", re.I)
 _EMPTY_HREF = re.compile(r"^(#|javascript:|)$", re.I)
@@ -48,7 +48,7 @@ CRYPTO_WORDS = re.compile(
 
 
 def _registered(url: str) -> str:
-    ext = tldextract.extract(url)
+    ext = suffix_extract(url)
     if not ext.domain:
         return ""
     return f"{ext.domain}.{ext.suffix}".lower() if ext.suffix else ext.domain.lower()
@@ -84,10 +84,10 @@ def _domain_core(page_url: str) -> str:
     Splitting on the last two labels treats every multi-label public suffix as
     the brand: ``bbc.co.uk`` returned ``co``, and a two-character needle matches
     almost any title, so DomainTitleMatchScore came back a false 100%.
-    ``tldextract`` knows the public suffix list, so the label it reports is the
-    one a person would call the domain name.
+    The offline public-suffix snapshot knows multi-label suffixes, so the
+    label it reports is the one a person would call the domain name.
     """
-    ext = tldextract.extract(page_url)
+    ext = suffix_extract(page_url)
     if ext.domain:
         return ext.domain.lower()
     host = _host(page_url)
