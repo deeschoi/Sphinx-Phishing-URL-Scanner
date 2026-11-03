@@ -1,0 +1,8 @@
+.venv
+datasets
+research
+web/node_modules
+tests
+.git
+**/*.pyc
+__pycache__

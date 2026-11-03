@@ -298,6 +298,15 @@ def test_render_defaults_to_public_anonymous_when_mode_is_unset(client, monkeypa
         assert remote.get("/api/scans").status_code == 200
 
 
+def test_vercel_does_not_open_anonymous_access(client, monkeypatch):
+    """VERCEL=1 selects the serverless pool. It is not a public-demo opt-in."""
+    monkeypatch.setattr(security, "api_key", lambda: "")
+    monkeypatch.delenv("SPHINX_ALLOW_ANONYMOUS", raising=False)
+    monkeypatch.setenv("VERCEL", "1")
+    with make_client(app, host="203.0.113.7") as remote:
+        assert remote.get("/api/scans").status_code == 401
+
+
 def test_render_does_not_override_an_explicit_anonymous_mode(client, monkeypatch):
     monkeypatch.setattr(security, "api_key", lambda: "")
     monkeypatch.setenv("RENDER", "true")

@@ -17,6 +17,8 @@ reports/figures/
 htmlcov/
 web/node_modules/
 web/dist/
+public/
+.vercel
 .env
 .claude/
 .cursor/

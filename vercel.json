@@ -1,0 +1,67 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "pip install -r requirements-serve.txt",
+  "buildCommand": "npm ci --prefix web && npm run build --prefix web && rm -rf public && mkdir -p public && cp -a web/dist/. public/",
+  "git": {
+    "deploymentEnabled": false
+  },
+  "functions": {
+    "app.py": {
+      "maxDuration": 60,
+      "includeFiles": "{artifacts/**,reports/*.json}",
+      "excludeFiles": "{datasets/**,research/**,web/node_modules/**,web/dist/**,web/src/**,public/**,tests/**,.venv/**,reports/figures/**}"
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/internal/maintenance",
+      "schedule": "*/10 * * * *"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "no-referrer"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=()"
+        },
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=31536000; includeSubDomains"
+        }
+      ]
+    },
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
+    }
+  ]
+}

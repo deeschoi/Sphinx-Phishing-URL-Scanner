@@ -35,6 +35,7 @@ PACKAGE_MODULES = [
     "phishing.tuning",
     "phishing.features.extractor",
     "api.main",
+    "app",
 ]
 
 

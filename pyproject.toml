@@ -53,3 +53,8 @@ ignore = [
 # Re-exports for convenience, not dead imports.
 "src/phishing/__init__.py" = ["F401"]
 "src/phishing/features/__init__.py" = ["F401"]
+# Set OMP_NUM_THREADS before the app (and therefore XGBoost) is imported.
+"app.py" = ["E402"]
+
+[tool.vercel]
+entrypoint = "app:app"
