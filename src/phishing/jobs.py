@@ -1,9 +1,9 @@
-"""In-process async scan jobs.
+"""Async scan jobs.
 
-A bounded worker pool (``SPHINX_JOB_WORKERS``) runs the existing ``scan()``
-then ``record_scan()`` path. Status transitions always land on ``done`` or
-``error`` so a crash cannot leave a row stuck at ``running``. Extra submits
-past ``JOB_QUEUE_MAX`` are refused instead of spawning another thread.
+``SPHINX_JOB_BACKEND=thread`` (the default) runs a bounded worker pool in
+this process. ``qstash`` writes the same rows and publishes each job id to
+Upstash QStash, which calls ``/api/internal/scan-jobs/run`` under a
+parallelism cap. Status transitions always land on ``done`` or ``error``.
 """
 
 from __future__ import annotations
@@ -17,6 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from phishing.db import (
+    claim_scan_job,
+    count_open_scan_jobs,
     create_scan_job,
     get_scan_job,
     list_batch_jobs,
@@ -27,7 +29,7 @@ from phishing.db import (
 )
 from phishing.netguard import UnsafeTargetError
 from phishing.scanner import scan
-from phishing.settings import JOB_QUEUE_MAX, JOB_WORKERS
+from phishing.settings import JOB_QUEUE_MAX, JOB_WORKERS, env, job_backend
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +43,14 @@ _executor: ThreadPoolExecutor | None = None
 
 class JobQueueFull(Exception):
     """The worker pool and its queue are both at their cap."""
+
+
+class JobPublishError(Exception):
+    """The durable queue did not accept every job in the request."""
+
+
+class InvalidWorkerSignature(Exception):
+    """A worker callback failed the QStash signature check."""
 
 
 def _capacity() -> int:
@@ -130,6 +140,11 @@ def enqueue_scan_job(
     client_key: str = "",
     batch_id: str | None = None,
 ) -> str:
+    if job_backend() == "qstash":
+        _, job_ids = _enqueue_durable(
+            [url], timeout=timeout, client_key=client_key, batch_id=batch_id
+        )
+        return job_ids[0]
     if not _reserve(1):
         raise JobQueueFull()
     job_id: str | None = None
@@ -163,6 +178,8 @@ def enqueue_batch(
     """
     if not urls:
         return str(uuid.uuid4()), []
+    if job_backend() == "qstash":
+        return _enqueue_durable(urls, timeout=timeout, client_key=client_key)
     if not _reserve(len(urls)):
         raise JobQueueFull()
     batch_id = str(uuid.uuid4())
@@ -240,3 +257,132 @@ def batch_status(batch_id: str) -> dict[str, Any] | None:
         "error": n_error,
         "jobs": jobs,
     }
+
+
+def worker_url() -> str:
+    """Absolute URL QStash posts job ids to.
+
+    ``VERCEL_URL`` is the deployment host, not the production alias, so a
+    staged deploy publishes back to itself and not to the previous production
+    deployment.
+    """
+    explicit = env("SPHINX_WORKER_URL", "").strip()
+    if explicit:
+        return explicit
+    base = env("SPHINX_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if not base:
+        host = env("VERCEL_URL", "").strip()
+        host = host.removeprefix("https://").removeprefix("http://").strip("/")
+        if host:
+            base = "https://" + host
+    if not base:
+        raise RuntimeError(
+            "Set SPHINX_WORKER_URL, SPHINX_PUBLIC_BASE_URL, or VERCEL_URL "
+            "when SPHINX_JOB_BACKEND=qstash."
+        )
+    return base + "/api/internal/scan-jobs/run"
+
+
+def _qstash_client():
+    from qstash import QStash
+
+    token = env("QSTASH_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("QSTASH_TOKEN is required when SPHINX_JOB_BACKEND=qstash")
+    return QStash(token)
+
+
+def _publish_job(job_id: str) -> None:
+    client = _qstash_client()
+    client.message.publish_json(
+        url=worker_url(),
+        body={"job_id": job_id},
+        # QStash delivers at most JOB_WORKERS scans at once. Sync scans use
+        # the separate Redis in-flight cap, so the outbound ceiling stays
+        # SCAN_MAX_CONCURRENT + JOB_WORKERS.
+        flow_control={"key": "sphinx-scan", "parallelism": max(1, JOB_WORKERS)},
+        retries=3,
+        timeout="55s",
+        deduplication_id=job_id,
+    )
+
+
+def _enqueue_durable(
+    urls: list[str],
+    *,
+    timeout: int,
+    client_key: str,
+    batch_id: str | None = None,
+) -> tuple[str | None, list[str]]:
+    """Insert every row, then publish. A failed publish marks the rest error."""
+    if count_open_scan_jobs() + len(urls) > _capacity():
+        raise JobQueueFull()
+    own_batch = batch_id
+    if own_batch is None and len(urls) > 1:
+        own_batch = str(uuid.uuid4())
+    job_ids: list[str] = []
+    for url in urls:
+        job_ids.append(
+            create_scan_job(
+                url, timeout=timeout, client_key=client_key, batch_id=own_batch
+            )
+        )
+    published = 0
+    try:
+        for job_id in job_ids:
+            _publish_job(job_id)
+            published += 1
+    except Exception as exc:
+        log.exception("could not publish scan job")
+        for job_id in job_ids[published:]:
+            try:
+                update_scan_job(job_id, status="error", error="Could not queue scan.")
+            except Exception:
+                log.exception("could not mark unpublished job %s as error", job_id)
+        raise JobPublishError("Could not queue scan.") from exc
+    try:
+        purge_old_scan_jobs()
+    except Exception:
+        log.exception("could not purge old scan jobs")
+    return own_batch, job_ids
+
+
+def verify_worker_signature(body: bytes, signature: str) -> None:
+    """Reject anything QStash did not sign with the current or next key.
+
+    The body is only a job id. The URL to scan is read from that row, so a
+    replay cannot choose a new target. ``url`` is the address we published,
+    which is the subject QStash signed.
+    """
+    current = env("QSTASH_CURRENT_SIGNING_KEY", "").strip()
+    nxt = env("QSTASH_NEXT_SIGNING_KEY", "").strip()
+    if not current or not nxt or not signature.strip():
+        raise InvalidWorkerSignature("missing signing key or signature")
+    try:
+        url = worker_url()
+        text = body.decode("utf-8")
+    except (RuntimeError, UnicodeError) as exc:
+        raise InvalidWorkerSignature("worker URL or body is not usable") from exc
+    from qstash import Receiver
+    from qstash.errors import SignatureError
+
+    receiver = Receiver(current_signing_key=current, next_signing_key=nxt)
+    try:
+        receiver.verify(signature=signature.strip(), body=text, url=url, clock_tolerance=60)
+    except SignatureError as exc:
+        raise InvalidWorkerSignature("invalid signature") from exc
+
+
+def run_queued_job(job_id: str) -> str:
+    """Claim a queued row and run it. A second delivery returns ``ignored``.
+
+    Scan failures are recorded on the row and still return ``error`` rather
+    than raising, so QStash does not fetch the target again.
+    """
+    if claim_scan_job(job_id) is None:
+        return "ignored"
+    _run_job(job_id)
+    row = get_scan_job(job_id)
+    if row is None:
+        return "ignored"
+    return row.status

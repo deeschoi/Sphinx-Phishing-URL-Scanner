@@ -85,19 +85,16 @@ CHAT_MAX_CONCURRENT = env_int("SPHINX_CHAT_MAX_CONCURRENT", 1)
 READ_RATE_PER_MINUTE = env_int("SPHINX_READ_RATE_PER_MINUTE", 60)
 
 
+def job_backend() -> str:
+    """``thread`` keeps the in-process pool. ``qstash`` publishes durable jobs."""
+    value = env("SPHINX_JOB_BACKEND", "thread").strip().lower()
+    return value if value in {"thread", "qstash"} else "thread"
+
+
 def rate_limit_backend() -> str:
     """``memory`` is process-local. ``redis`` is shared across function instances."""
     value = env("SPHINX_RATE_LIMIT_BACKEND", "memory").strip().lower()
     return value if value in {"memory", "redis"} else "memory"
-
-
-def lease_ttl_seconds() -> int:
-    """How long a crashed instance may hold a Redis in-flight slot.
-
-    Match the function ``maxDuration``. After this the lease score expires
-    and another scan can take the slot.
-    """
-    return max(1, env_int("SPHINX_LEASE_TTL_SECONDS", 60))
 
 
 def serverless() -> bool:
@@ -108,6 +105,15 @@ def serverless() -> bool:
     ``SPHINX_ALLOW_ANONYMOUS``.
     """
     return env_bool("SPHINX_SERVERLESS") or env_bool("VERCEL")
+
+
+def lease_ttl_seconds() -> int:
+    """How long a crashed instance may hold a Redis in-flight slot.
+
+    Match the function ``maxDuration``. After this the lease score expires
+    and another scan can take the slot.
+    """
+    return max(1, env_int("SPHINX_LEASE_TTL_SECONDS", 60))
 
 
 def api_key() -> str:

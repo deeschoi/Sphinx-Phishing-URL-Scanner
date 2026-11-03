@@ -33,6 +33,7 @@ from phishing.db import (
     scan_stats,
 )
 from phishing.jobs import (
+    JobPublishError,
     JobQueueFull,
     batch_status,
     enqueue_batch,
@@ -126,6 +127,14 @@ def _queue_full() -> HTTPException:
     return HTTPException(
         status_code=503,
         detail="Too many scans queued. Try again in a moment.",
+        headers={"Retry-After": "5"},
+    )
+
+
+def _publish_failed() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail="Could not queue scan. Try again in a moment.",
         headers={"Retry-After": "5"},
     )
 
@@ -544,6 +553,8 @@ def create_scan_job(request: ScanRequest, http_request: Request) -> JSONResponse
         job_id = enqueue_scan_job(request.url, timeout=request.timeout, client_key=key)
     except JobQueueFull:
         raise _queue_full() from None
+    except JobPublishError:
+        raise _publish_failed() from None
     return JSONResponse({"job_id": job_id}, status_code=202)
 
 
@@ -566,6 +577,8 @@ def create_scan_batch(request: BatchRequest, http_request: Request) -> JSONRespo
         batch_id, job_ids = enqueue_batch(urls, timeout=request.timeout, client_key=key)
     except JobQueueFull:
         raise _queue_full() from None
+    except JobPublishError:
+        raise _publish_failed() from None
     return JSONResponse({"batch_id": batch_id, "job_ids": job_ids}, status_code=202)
 
 

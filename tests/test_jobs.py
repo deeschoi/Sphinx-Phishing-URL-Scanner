@@ -156,3 +156,109 @@ def test_job_and_batch_endpoints(jobs_env, monkeypatch):
             json={"urls": [f"https://x{i}.example" for i in range(30)]},
         )
         assert too_big.status_code == 400
+
+
+def test_qstash_enqueue_publishes_the_job_id_and_stays_queued(jobs_env, monkeypatch):
+    _, jobs = jobs_env
+    monkeypatch.setenv("SPHINX_JOB_BACKEND", "qstash")
+    published: list[str] = []
+    monkeypatch.setattr(jobs, "_publish_job", published.append)
+    job_id = jobs.enqueue_scan_job("https://example.com", client_key="1.2.3.4")
+    assert published == [job_id]
+    assert jobs.job_status(job_id)["status"] == "queued"
+
+
+def test_qstash_publish_sends_parallelism_and_only_the_job_id(jobs_env, monkeypatch):
+    _, jobs = jobs_env
+    monkeypatch.setenv("SPHINX_JOB_BACKEND", "qstash")
+    monkeypatch.setenv("SPHINX_WORKER_URL", "https://sphinx.example/api/internal/scan-jobs/run")
+
+    class Messages:
+        kwargs: dict | None = None
+
+        def publish_json(self, **kwargs):
+            self.kwargs = kwargs
+
+    class Client:
+        def __init__(self) -> None:
+            self.message = Messages()
+
+    client = Client()
+    monkeypatch.setattr(jobs, "_qstash_client", lambda: client)
+    job_id = jobs.enqueue_scan_job("https://example.com")
+    assert client.message.kwargs is not None
+    assert client.message.kwargs["url"] == "https://sphinx.example/api/internal/scan-jobs/run"
+    assert client.message.kwargs["body"] == {"job_id": job_id}
+    assert client.message.kwargs["flow_control"] == {
+        "key": "sphinx-scan",
+        "parallelism": jobs.JOB_WORKERS,
+    }
+    assert client.message.kwargs["deduplication_id"] == job_id
+
+
+def test_qstash_publish_failure_marks_unpublished_rows(jobs_env, monkeypatch):
+    _, jobs = jobs_env
+    monkeypatch.setenv("SPHINX_JOB_BACKEND", "qstash")
+    calls: list[str] = []
+
+    def publish(job_id: str) -> None:
+        calls.append(job_id)
+        if len(calls) == 2:
+            raise RuntimeError("qstash down")
+
+    monkeypatch.setattr(jobs, "_publish_job", publish)
+    with pytest.raises(jobs.JobPublishError):
+        jobs.enqueue_batch(
+            ["https://a.example", "https://b.example", "https://c.example"],
+            client_key="1.2.3.4",
+        )
+    assert jobs.job_status(calls[0])["status"] == "queued"
+    assert jobs.job_status(calls[1])["status"] == "error"
+    # The third row was inserted and then marked, so it has a status too.
+    from phishing.db import list_batch_jobs
+
+    # batch id is on the first job
+    batch_id = jobs.job_status(calls[0])["batch_id"]
+    rows = {row.id: row.status for row in list_batch_jobs(batch_id)}
+    assert rows[calls[0]] == "queued"
+    assert set(rows.values()) == {"queued", "error"}
+    assert list(rows.values()).count("error") == 2
+
+
+def test_qstash_queue_cap_counts_rows(jobs_env, monkeypatch):
+    _, jobs = jobs_env
+    monkeypatch.setenv("SPHINX_JOB_BACKEND", "qstash")
+    monkeypatch.setattr(jobs, "JOB_WORKERS", 1)
+    monkeypatch.setattr(jobs, "JOB_QUEUE_MAX", 1)
+    monkeypatch.setattr(jobs, "_publish_job", lambda job_id: None)
+    jobs.enqueue_scan_job("https://example.com/1")
+    jobs.enqueue_scan_job("https://example.com/2")
+    with pytest.raises(jobs.JobQueueFull):
+        jobs.enqueue_scan_job("https://example.com/3")
+
+
+def test_claim_runs_once_and_a_replay_is_ignored(jobs_env, monkeypatch):
+    db, jobs = jobs_env
+    monkeypatch.setattr(jobs, "scan", lambda url, timeout=8: _payload(url))
+    job_id = db.create_scan_job("https://example.com", client_key="1.2.3.4")
+    assert jobs.run_queued_job(job_id) == "done"
+    assert jobs.run_queued_job(job_id) == "ignored"
+    payload = jobs.job_status(job_id)
+    assert payload["status"] == "done"
+    assert payload["result"]["verdict"] == "legitimate"
+
+
+def test_maintenance_times_out_a_stuck_running_job(jobs_env):
+    from datetime import UTC, datetime, timedelta
+
+    db, _jobs = jobs_env
+    job_id = db.create_scan_job("https://example.com")
+    assert db.claim_scan_job(job_id) is not None
+    with db.session_scope() as session:
+        row = session.get(db.ScanJob, job_id)
+        assert row is not None
+        row.started_at = datetime.now(UTC) - timedelta(minutes=10)
+    assert db.fail_stale_running_jobs() == 1
+    assert db.get_scan_job(job_id).status == "error"
+    assert db.get_scan_job(job_id).error == "Scan timed out."
+    assert db.fail_stale_running_jobs() == 0
