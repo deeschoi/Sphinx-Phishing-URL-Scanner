@@ -71,7 +71,9 @@ def train_phiusiil_model(*, model_name: str = MODEL_NAME) -> dict[str, Any]:
         for name in PHIUSIIL_HTML_FEATURES
     }
 
-    template = build_models()[model_name]
+    # Only the served estimator. build_models() would also construct LightGBM,
+    # which the Vercel train environment does not install.
+    template = build_models([model_name])[model_name]
     _, metrics, thresholds = _fit_eval(template, X_tr, y_tr, X_te, y_te)
     warn = thresholds["warn"]["threshold"]
     block = max(thresholds["block"]["threshold"], warn)
