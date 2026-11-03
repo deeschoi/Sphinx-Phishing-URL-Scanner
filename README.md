@@ -34,9 +34,44 @@ Chat is an explanation layer over a scan that already happened. Scans never need
 
 There is also a CLI (`phishing scan`) and an HTTP API (`POST /api/scan`, `POST /api/scan/jobs`, `POST /api/scan/batch`; OpenAPI at `/docs` when `SPHINX_ENABLE_DOCS=1`). Route table and payload fields: [docs/parameters.md](docs/parameters.md).
 
+## Public demo (Vercel)
+
+The hosted demo can also run as one Python function on Vercel. The UI is on the CDN. Neon Postgres holds scan history, Upstash Redis holds the shared rate limit, and Upstash QStash runs scan jobs. Render stays up as the rollback host. The “Try Sphinx” link above stays on Render until `python scripts/parity_check.py https://sphinx-tnna.onrender.com <vercel-url>` exits 0.
+
+Git deploys are off. [`.github/workflows/deploy-vercel.yml`](.github/workflows/deploy-vercel.yml) trains the model, migrates the production Neon branch, builds, smoke-tests a URL that is not on the production domain, and promotes only when those checks pass. `vercel rollback` returns to the previous deploy. The live link can point back at Render at any time.
+
+Preview and Production use different Neon branches, so a preview never writes production telemetry. Preview deployments have Deployment Protection turned on (`scripts/ensure_preview_protection.sh`) so they are not an anonymous open proxy. Production deployment URLs stay reachable: QStash and the smoke test call the staged URL before promote.
+
+`vercel.json` schedules maintenance every 10 minutes. That schedule needs a Vercel plan that allows it. A Hobby account often accepts a cron only once a day; if the deploy rejects the schedule, the maintenance route is still there to call by hand.
+
+Dashboard env for Production (never commit secrets, and never set `GROQ_API_KEY` or `SPHINX_API_KEY`):
+
+| Variable | Production |
+| --- | --- |
+| `SPHINX_ALLOW_ANONYMOUS` | `1` (explicit; `VERCEL=1` does not open the API) |
+| `SPHINX_SCAN_RATE_PER_MINUTE` | `8` |
+| `SPHINX_SCAN_MAX_CONCURRENT` | `2` |
+| `SPHINX_JOB_WORKERS` | `2` |
+| `SPHINX_CHAT_RATE_PER_MINUTE` | `5` |
+| `SPHINX_CHAT_MAX_CONCURRENT` | `1` |
+| `SPHINX_TRUST_PROXY_HEADERS` | `1` |
+| `SPHINX_TRUSTED_PROXY_HOPS` | `1` |
+| `SPHINX_RATE_LIMIT_BACKEND` | `redis` |
+| `REDIS_URL` | Upstash `rediss://` URL |
+| `SPHINX_JOB_BACKEND` | `qstash` |
+| `QSTASH_TOKEN` | Upstash token |
+| `QSTASH_CURRENT_SIGNING_KEY` | current signing key |
+| `QSTASH_NEXT_SIGNING_KEY` | next signing key |
+| `CRON_SECRET` | bearer token Vercel Cron sends |
+| `PHISHING_DATABASE_URL` | Neon pooled string for this environment’s branch |
+| `SPHINX_LEASE_TTL_SECONDS` | `60` (same as the function `maxDuration`) |
+| `OMP_NUM_THREADS` | `1` (`app.py` sets this when it is unset) |
+
+The function is trained and installed from [`requirements-serve.txt`](requirements-serve.txt) (`xgboost-cpu`, no shap). Docker and Render keep using [`requirements.txt`](requirements.txt).
+
 ## Public demo (Render)
 
-Sphinx is a long-running app, not a static site. A README “try it” link needs the Docker image on a host that keeps `uvicorn` up (Render, Fly, Cloud Run, a VPS). The intended public setup is a **Render Docker web service**, **Free** instance, **ephemeral SQLite**, **no `GROQ_API_KEY`**.
+Sphinx also runs as a long-running process. The rollback host is a **Render Docker web service**, **Free** instance, **ephemeral SQLite**, **no `GROQ_API_KEY`**. A VPS, Fly, or Cloud Run can run the same image.
 
 Visitors scan anonymously. Chat is bring-your-own-key so Groq bills them, not the operator. Health check **`/api/ready`** (not `/api/health`). First image build trains the model and can take 30+ minutes. Free instances sleep after idle; the next click pays a cold start. One instance, no autoscaling: rate limits are process-local.
 
@@ -123,11 +158,19 @@ phishing scan --tier A https://example.com   # URL string only, no network fetch
 | `SPHINX_ALLOW_ANONYMOUS` | `loopback` (Render: `1` if unset) | Who may call those routes with no key: `loopback`, `private`, `1`/`all`, `0`/`never` |
 | `GROQ_API_KEY` | unset | Optional operator fallback. Omit on a public host; visitors can still send `X-Groq-Api-Key` |
 | `PHISHING_DATABASE_URL` | SQLite under `data/` | Scan telemetry. Point at Postgres for compose `--profile postgres`, or attach a Render disk at `/app/data` so History survives replaces |
-| `SPHINX_JOB_WORKERS` | same as `SPHINX_SCAN_MAX_CONCURRENT` | In-flight async scan jobs |
+| `SPHINX_JOB_WORKERS` | same as `SPHINX_SCAN_MAX_CONCURRENT` | In-flight async scan jobs. With QStash this is the flow-control parallelism |
 | `SPHINX_JOB_QUEUE_MAX` | `32` | Jobs waiting behind those workers. Past this, enqueue returns 503 |
+| `SPHINX_JOB_BACKEND` | `thread` | `qstash` publishes durable jobs. Local, Docker, and Render stay on `thread` |
+| `SPHINX_RATE_LIMIT_BACKEND` | `memory` | `redis` shares the budget across function instances |
+| `REDIS_URL` | unset | Required when the rate-limit backend is `redis` |
+| `SPHINX_LEASE_TTL_SECONDS` | `60` | How long a crashed instance may hold a Redis scan slot |
 | `SPHINX_BATCH_MAX_URLS` | `25` | Cap on `POST /api/scan/batch`, clamped to `SPHINX_SCAN_RATE_PER_MINUTE` (a batch of N spends N) |
 | `SPHINX_ENABLE_DOCS` | unset | Set to `1` to publish `/docs`. Off by default |
 | `SPHINX_TRUST_PROXY_HEADERS` | `0` | Honour `X-Forwarded-For` only behind a proxy you control |
+| `QSTASH_TOKEN` | unset | Publish token for `SPHINX_JOB_BACKEND=qstash` |
+| `QSTASH_CURRENT_SIGNING_KEY` | unset | Verifies `POST /api/internal/scan-jobs/run` |
+| `QSTASH_NEXT_SIGNING_KEY` | unset | Accepted during a signing-key rotation |
+| `CRON_SECRET` | unset | Bearer token for `GET` or `POST /api/internal/maintenance` |
 
 When `SPHINX_ALLOW_ANONYMOUS` is the public opt-in (`1` / `all`) and no API key is set, history and stats are limited to the calling client. A configured API key is one tenant and sees every row. Scan ids in the API are random, not the database counter.
 
@@ -141,7 +184,7 @@ cd web && npm test          # React / Vite unit tests
 phishing train              # PhiUSIIL XGBoost → artifacts/model.joblib
 phishing evaluate           # 2012 leakage-delta table (research, not the served model)
 phishing validate           # 2012 Tier-A drift vs 2026 legitimate URLs
-alembic upgrade head        # apply migrations (the API also creates tables on boot)
+alembic upgrade head        # apply migrations (local and Docker still create tables on boot; Vercel does not)
 ```
 
 CI also typechecks and builds the UI, lints with Ruff, imports every entry point, and smoke-tests the Docker image (including that private targets return 403). Numbered scripts under `scripts/` train the served model (`06`) and run the live re-extraction eval (`07`; see [docs/](docs/README.md)). The 2012 UCI scripts and notebooks live under [`research/`](research/README.md).
@@ -163,5 +206,8 @@ research/                             2012 coursework — not used at scan time
 artifacts/model.joblib                fitted model (gitignored; run train)
 reports/                              CSV / JSON / figures, including the model card
 Dockerfile                            trains at build, serves uvicorn on $PORT
-render.yaml                           public demo Blueprint
+render.yaml                           rollback demo Blueprint
+requirements-serve.txt                Vercel function deps (xgboost-cpu, no shap)
+app.py                                Vercel entrypoint; re-exports api.main:app
+vercel.json                           CDN, headers, cron, function limits
 ```
