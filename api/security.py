@@ -24,6 +24,9 @@ from phishing.settings import (
     SCAN_RATE_PER_MINUTE,
     allow_anonymous,
     api_key,
+    env,
+    lease_ttl_seconds,
+    rate_limit_backend,
 )
 
 WINDOW_SECONDS = 60.0
@@ -131,15 +134,275 @@ class _Slot:
             self._held = False
 
 
-scan_limiter = RateLimiter(SCAN_RATE_PER_MINUTE, SCAN_MAX_CONCURRENT)
-chat_limiter = RateLimiter(
+# Sliding window. ARGV: now, window seconds, limit, cost, unique member prefix.
+# Returns {1, 0} when the cost fits, else {0, retry_after_seconds}. The cost
+# is all or nothing: a batch that does not fit adds nothing.
+_WINDOW_LUA = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local cost = tonumber(ARGV[4])
+local member_prefix = ARGV[5]
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now - window)
+local count = redis.call('ZCARD', key)
+if (count + cost) > limit then
+  local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+  local retry = math.ceil(window)
+  if oldest[2] ~= nil then
+    retry = math.ceil(window - (now - tonumber(oldest[2])))
+  end
+  if retry < 1 then
+    retry = 1
+  end
+  return {0, retry}
+end
+for i = 1, cost do
+  redis.call('ZADD', key, now, member_prefix .. ':' .. i)
+end
+redis.call('PEXPIRE', key, math.ceil(window * 1000))
+return {1, 0}
+"""
+
+# In-flight leases. ARGV: now_ms, ttl_ms, max, lease id. Returns 1 or 0.
+# Each lease's score is its expiry, so a killed instance frees the slot
+# when maxDuration elapses even if it never decrements.
+_LEASE_ACQUIRE_LUA = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+local maxc = tonumber(ARGV[3])
+local lease = ARGV[4]
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now)
+local count = redis.call('ZCARD', key)
+if count >= maxc then
+  return 0
+end
+redis.call('ZADD', key, now + ttl, lease)
+local key_ttl = redis.call('PTTL', key)
+if key_ttl < ttl then
+  redis.call('PEXPIRE', key, ttl)
+end
+return 1
+"""
+
+_LEASE_RELEASE_LUA = """
+redis.call('ZREM', KEYS[1], ARGV[1])
+return 1
+"""
+
+_redis_client = None
+
+
+def redis_client():
+    """Shared Redis connection for the rate limiters, or None on the memory backend."""
+    global _redis_client
+    if rate_limit_backend() != "redis":
+        return None
+    if _redis_client is None:
+        import redis
+
+        url = env("REDIS_URL", "").strip()
+        if not url:
+            raise RuntimeError(
+                "REDIS_URL is required when SPHINX_RATE_LIMIT_BACKEND=redis"
+            )
+        _redis_client = redis.Redis.from_url(
+            url,
+            decode_responses=True,
+            socket_timeout=2.0,
+            socket_connect_timeout=2.0,
+        )
+    return _redis_client
+
+
+class RedisRateLimiter:
+    """Sliding-window counter and in-flight leases stored in Redis.
+
+    ``fail_closed`` is for scan and chat: if Redis is down, those routes
+    503. A public demo's rate limit is the only abuse control, so failing
+    open would remove it. Reads fail open so a Redis blip does not blank
+    History while a scan is already running.
+    """
+
+    def __init__(
+        self,
+        per_minute: int,
+        max_concurrent: int,
+        *,
+        client,
+        prefix: str,
+        fail_closed: bool,
+        lease_ttl_seconds: int = 60,
+        busy_detail: str = "Too many scans in flight. Try again in a moment.",
+    ) -> None:
+        self.per_minute = max(0, per_minute)
+        self.max_concurrent = max(1, max_concurrent)
+        self.client = client
+        self.prefix = prefix
+        self.fail_closed = fail_closed
+        self.lease_ttl_seconds = max(1, lease_ttl_seconds)
+        self.busy_detail = busy_detail
+
+    def check(self, client: str, now: float | None = None, cost: int = 1) -> None:
+        if self.per_minute <= 0:
+            return
+        cost = max(1, int(cost))
+        # Wall clock, not monotonic: every instance has to agree on the window.
+        now = time.time() if now is None else now
+        try:
+            allowed, retry_after = self._window(client, now, cost)
+        except Exception as exc:
+            if _is_redis_error(exc) and not self.fail_closed:
+                return
+            if _is_redis_error(exc):
+                raise _limiter_unavailable() from exc
+            raise
+        if allowed:
+            return
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Rate limit reached: {self.per_minute} requests per minute. "
+                f"Try again in {retry_after}s."
+            ),
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    def _window(self, client: str, now: float, cost: int) -> tuple[bool, int]:
+        member = f"{now:.6f}:{uuid_hex()}"
+        result = self.client.eval(
+            _WINDOW_LUA,
+            1,
+            f"sphinx:rl:{self.prefix}:{client}",
+            now,
+            WINDOW_SECONDS,
+            self.per_minute,
+            cost,
+            member,
+        )
+        allowed = int(result[0]) == 1
+        retry_after = max(1, int(result[1]))
+        return allowed, retry_after
+
+    def slot(self) -> _RedisSlot:
+        return _RedisSlot(self)
+
+
+class _RedisSlot:
+    def __init__(self, limiter: RedisRateLimiter) -> None:
+        self._limiter = limiter
+        self._lease: str | None = None
+
+    def __enter__(self) -> _RedisSlot:
+        lease = uuid_hex()
+        now_ms = int(time.time() * 1000)
+        ttl_ms = self._limiter.lease_ttl_seconds * 1000
+        try:
+            acquired = self._limiter.client.eval(
+                _LEASE_ACQUIRE_LUA,
+                1,
+                f"sphinx:inflight:{self._limiter.prefix}",
+                now_ms,
+                ttl_ms,
+                self._limiter.max_concurrent,
+                lease,
+            )
+        except Exception as exc:
+            if _is_redis_error(exc) and not self._limiter.fail_closed:
+                return self
+            if _is_redis_error(exc):
+                raise _limiter_unavailable() from exc
+            raise
+        if int(acquired) != 1:
+            raise HTTPException(
+                status_code=503,
+                detail=self._limiter.busy_detail,
+                headers={"Retry-After": "5"},
+            )
+        self._lease = lease
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._lease is None:
+            return
+        try:
+            self._limiter.client.eval(
+                _LEASE_RELEASE_LUA,
+                1,
+                f"sphinx:inflight:{self._limiter.prefix}",
+                self._lease,
+            )
+        except Exception as err:
+            if not _is_redis_error(err):
+                raise
+            # The lease score expires on its own.
+        finally:
+            self._lease = None
+
+
+def _is_redis_error(exc: BaseException) -> bool:
+    try:
+        from redis.exceptions import RedisError
+    except ImportError:
+        return False
+    return isinstance(exc, RedisError)
+
+
+def _limiter_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail="Rate limiter unavailable. Try again in a moment.",
+        headers={"Retry-After": "5"},
+    )
+
+
+def uuid_hex() -> str:
+    import uuid
+
+    return uuid.uuid4().hex
+
+
+def _build_limiter(
+    per_minute: int,
+    max_concurrent: int,
+    *,
+    name: str,
+    fail_closed: bool,
+    busy_detail: str,
+) -> RateLimiter | RedisRateLimiter:
+    if rate_limit_backend() == "redis":
+        return RedisRateLimiter(
+            per_minute,
+            max_concurrent,
+            client=redis_client(),
+            prefix=name,
+            fail_closed=fail_closed,
+            lease_ttl_seconds=lease_ttl_seconds(),
+            busy_detail=busy_detail,
+        )
+    return RateLimiter(per_minute, max_concurrent, busy_detail=busy_detail)
+
+
+scan_limiter = _build_limiter(
+    SCAN_RATE_PER_MINUTE,
+    SCAN_MAX_CONCURRENT,
+    name="scan",
+    fail_closed=True,
+    busy_detail="Too many scans in flight. Try again in a moment.",
+)
+chat_limiter = _build_limiter(
     CHAT_RATE_PER_MINUTE,
     CHAT_MAX_CONCURRENT,
+    name="chat",
+    fail_closed=True,
     busy_detail="Too many chat requests in flight. Try again in a moment.",
 )
-read_limiter = RateLimiter(
+read_limiter = _build_limiter(
     READ_RATE_PER_MINUTE,
     max_concurrent=8,
+    name="read",
+    fail_closed=False,
     busy_detail="Too many history requests in flight. Try again in a moment.",
 )
 

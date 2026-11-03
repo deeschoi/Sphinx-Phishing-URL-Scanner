@@ -42,7 +42,14 @@ from phishing.jobs import (
 )
 from phishing.netguard import UnsafeTargetError
 from phishing.scanner import available_models, research_findings, scan
-from phishing.settings import BATCH_MAX_URLS, GROQ_MODEL, env_bool, groq_api_key, serverless
+from phishing.settings import (
+    BATCH_MAX_URLS,
+    GROQ_MODEL,
+    env_bool,
+    groq_api_key,
+    rate_limit_backend,
+    serverless,
+)
 
 log = logging.getLogger(__name__)
 _DOCS_ENABLED = env_bool("SPHINX_ENABLE_DOCS")
@@ -731,8 +738,22 @@ def ready() -> dict:
         log.exception("readiness database check failed")
         checks["database"] = type(exc).__name__
 
+    checks["rate_limit"] = rate_limit_backend()
     checks["frontend"] = "built" if (DIST_DIR / "index.html").is_file() else "not built"
     checks["analyst"] = "server_key" if groq_api_key() else "byok"
+    if rate_limit_backend() == "redis":
+        try:
+            from api.security import redis_client
+
+            client = redis_client()
+            if client is None:
+                raise RuntimeError("redis backend has no client")
+            client.ping()
+            checks["redis"] = "ok"
+        except Exception as exc:  # noqa: BLE001 — readiness reports, never raises
+            ok = False
+            log.exception("readiness redis check failed")
+            checks["redis"] = type(exc).__name__
     if not ok:
         raise HTTPException(status_code=503, detail={"status": "not ready", **checks})
     return {"status": "ready", **checks}

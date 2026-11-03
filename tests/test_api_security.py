@@ -25,8 +25,31 @@ def client(monkeypatch, tmp_path):
 # --- rate limiting -----------------------------------------------------------
 
 
-def test_rate_limiter_allows_then_refuses_within_the_window():
-    limiter = security.RateLimiter(per_minute=3, max_concurrent=2)
+def _make_limiter(backend: str, per_minute: int, max_concurrent: int, **kwargs):
+    if backend == "memory":
+        return security.RateLimiter(per_minute, max_concurrent, **kwargs)
+    import fakeredis
+
+    return security.RedisRateLimiter(
+        per_minute,
+        max_concurrent,
+        client=fakeredis.FakeRedis(decode_responses=True),
+        prefix="scan",
+        fail_closed=kwargs.pop("fail_closed", True),
+        **kwargs,
+    )
+
+
+@pytest.fixture(params=["memory", "redis"])
+def make_limiter(request):
+    def build(per_minute: int, max_concurrent: int, **kwargs):
+        return _make_limiter(request.param, per_minute, max_concurrent, **kwargs)
+
+    return build
+
+
+def test_rate_limiter_allows_then_refuses_within_the_window(make_limiter):
+    limiter = make_limiter(per_minute=3, max_concurrent=2)
     for _ in range(3):
         limiter.check("1.2.3.4", now=100.0)
     with pytest.raises(HTTPException) as excinfo:
@@ -35,8 +58,8 @@ def test_rate_limiter_allows_then_refuses_within_the_window():
     assert "Retry-After" in (excinfo.value.headers or {})
 
 
-def test_rate_limiter_window_slides():
-    limiter = security.RateLimiter(per_minute=2, max_concurrent=2)
+def test_rate_limiter_window_slides(make_limiter):
+    limiter = make_limiter(per_minute=2, max_concurrent=2)
     limiter.check("1.2.3.4", now=0.0)
     limiter.check("1.2.3.4", now=1.0)
     with pytest.raises(HTTPException):
@@ -45,16 +68,16 @@ def test_rate_limiter_window_slides():
     limiter.check("1.2.3.4", now=70.0)
 
 
-def test_rate_limiter_budgets_are_per_client():
-    limiter = security.RateLimiter(per_minute=1, max_concurrent=2)
+def test_rate_limiter_budgets_are_per_client(make_limiter):
+    limiter = make_limiter(per_minute=1, max_concurrent=2)
     limiter.check("1.1.1.1", now=0.0)
     limiter.check("2.2.2.2", now=0.0)
     with pytest.raises(HTTPException):
         limiter.check("1.1.1.1", now=0.0)
 
 
-def test_concurrency_cap_refuses_rather_than_queueing():
-    limiter = security.RateLimiter(per_minute=100, max_concurrent=1)
+def test_concurrency_cap_refuses_rather_than_queueing(make_limiter):
+    limiter = make_limiter(per_minute=100, max_concurrent=1)
     with limiter.slot():
         with pytest.raises(HTTPException) as excinfo:
             with limiter.slot():
@@ -62,6 +85,60 @@ def test_concurrency_cap_refuses_rather_than_queueing():
         assert excinfo.value.status_code == 503
     # The slot is released on exit, so the next caller gets in.
     with limiter.slot():
+        pass
+
+
+def test_rate_limiter_batch_cost_is_all_or_nothing(make_limiter):
+    limiter = make_limiter(per_minute=3, max_concurrent=2)
+    limiter.check("1.2.3.4", now=10.0, cost=2)
+    with pytest.raises(HTTPException) as excinfo:
+        limiter.check("1.2.3.4", now=10.0, cost=2)
+    assert excinfo.value.status_code == 429
+    # The refused batch did not spend the remaining slot.
+    limiter.check("1.2.3.4", now=10.0, cost=1)
+
+
+def test_redis_lease_expires_when_the_holder_never_releases():
+    import fakeredis
+
+    client = fakeredis.FakeRedis(decode_responses=True)
+    limiter = security.RedisRateLimiter(
+        10, 1, client=client, prefix="scan", fail_closed=True, lease_ttl_seconds=60
+    )
+    held = limiter.slot()
+    held.__enter__()
+    # A killed instance leaves the lease. Age its score out.
+    key = "sphinx:inflight:scan"
+    for member in client.zrange(key, 0, -1):
+        client.zadd(key, {member: 0})
+    with limiter.slot():
+        pass
+    held.__exit__(None, None, None)
+
+
+def test_redis_outage_fails_closed_for_scans_and_open_for_reads():
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    class Down:
+        def eval(self, *_args, **_kwargs):
+            raise RedisConnectionError("redis down")
+
+    closed = security.RedisRateLimiter(
+        10, 2, client=Down(), prefix="scan", fail_closed=True
+    )
+    with pytest.raises(HTTPException) as excinfo:
+        closed.check("1.2.3.4", now=1.0)
+    assert excinfo.value.status_code == 503
+    with pytest.raises(HTTPException) as slot_error:
+        with closed.slot():
+            pass
+    assert slot_error.value.status_code == 503
+
+    opened = security.RedisRateLimiter(
+        10, 2, client=Down(), prefix="read", fail_closed=False
+    )
+    opened.check("1.2.3.4", now=1.0)
+    with opened.slot():
         pass
 
 
@@ -306,6 +383,21 @@ def test_readiness_reports_not_ready_without_a_model(client, monkeypatch):
     response = client.get("/api/ready")
     assert response.status_code == 503
     assert "No trained model" in response.json()["detail"]["model_error"]
+
+
+def test_readiness_reports_redis_down_without_the_exception_text(client, monkeypatch):
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    class Down:
+        def ping(self):
+            raise RedisConnectionError("password=supersecret")
+
+    monkeypatch.setenv("SPHINX_RATE_LIMIT_BACKEND", "redis")
+    monkeypatch.setattr(security, "_redis_client", Down())
+    response = client.get("/api/ready")
+    assert response.status_code == 503
+    assert "supersecret" not in response.text
+    assert response.json()["detail"]["redis"] == "ConnectionError"
 
 
 def test_serverless_startup_skips_init_db(monkeypatch, tmp_path):

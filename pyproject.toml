@@ -20,6 +20,7 @@ where = ["src"]
 dev = [
     "pytest==9.1.1",
     "httpx==0.28.1",
+    "fakeredis[lua]==2.40.0",
 ]
 
 [project.scripts]
