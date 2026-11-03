@@ -85,6 +85,16 @@ CHAT_MAX_CONCURRENT = env_int("SPHINX_CHAT_MAX_CONCURRENT", 1)
 READ_RATE_PER_MINUTE = env_int("SPHINX_READ_RATE_PER_MINUTE", 60)
 
 
+def serverless() -> bool:
+    """No durable local disk, and no schema changes on the request path.
+
+    ``VERCEL=1`` is set by the platform. It selects a NullPool and skips
+    ``init_db``. It does not open anonymous access. That stays an explicit
+    ``SPHINX_ALLOW_ANONYMOUS``.
+    """
+    return env_bool("SPHINX_SERVERLESS") or env_bool("VERCEL")
+
+
 def api_key() -> str:
     """Shared secret required on mutating/telemetry routes, or "" to leave open.
 

@@ -308,6 +308,16 @@ def test_readiness_reports_not_ready_without_a_model(client, monkeypatch):
     assert "No trained model" in response.json()["detail"]["model_error"]
 
 
+def test_serverless_startup_skips_init_db(monkeypatch, tmp_path):
+    monkeypatch.setenv("SPHINX_SERVERLESS", "1")
+    monkeypatch.setenv("PHISHING_DATABASE_URL", f"sqlite:///{tmp_path / 'skipped.db'}")
+    called: list[bool] = []
+    monkeypatch.setattr("api.main.init_db", lambda: called.append(True))
+    with make_client(app) as remote:
+        assert remote.get("/api/health").status_code == 200
+    assert called == []
+
+
 def test_readiness_checks_the_model_and_the_database(client):
     response = client.get("/api/ready")
     if response.status_code == 503:

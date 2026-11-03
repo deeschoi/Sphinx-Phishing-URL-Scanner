@@ -42,7 +42,7 @@ from phishing.jobs import (
 )
 from phishing.netguard import UnsafeTargetError
 from phishing.scanner import available_models, research_findings, scan
-from phishing.settings import BATCH_MAX_URLS, GROQ_MODEL, env_bool, groq_api_key
+from phishing.settings import BATCH_MAX_URLS, GROQ_MODEL, env_bool, groq_api_key, serverless
 
 log = logging.getLogger(__name__)
 _DOCS_ENABLED = env_bool("SPHINX_ENABLE_DOCS")
@@ -67,11 +67,13 @@ MISSING_FRONTEND = """<!doctype html>
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    init_db()
-    try:
-        purge_old_scan_jobs()
-    except Exception:
-        log.exception("could not purge old scan jobs at startup")
+    # Serverless boots must not run DDL. CI applies migrations before deploy.
+    if not serverless():
+        init_db()
+        try:
+            purge_old_scan_jobs()
+        except Exception:
+            log.exception("could not purge old scan jobs at startup")
     yield
     shutdown_jobs()
 

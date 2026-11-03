@@ -35,8 +35,11 @@ from sqlalchemy import (
     delete,
     func,
     select,
+    text,
+    update,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from phishing.config import PHIUSIIL_MODEL_FEATURES, PROJECT_ROOT
 from phishing.features.reachability import LIVE_RISK_VERDICTS
@@ -222,6 +225,10 @@ class ScanJob(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     client_key: Mapped[str] = mapped_column(String(64), default="")
     timeout: Mapped[int] = mapped_column(Integer, default=8)
+    # Set when a worker claims the row. Maintenance times out ``running``
+    # rows from this clock, not from ``created_at``, so a job can wait in
+    # the queue without being declared dead.
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -253,7 +260,16 @@ def get_engine():
         # timeout: without it SQLite fails immediately on a locked database, and
         # record_scan swallows the error, so history silently drops under load.
         connect_args = {"check_same_thread": False, "timeout": 15} if is_sqlite else {}
-        _engine = create_engine(url, future=True, connect_args=connect_args)
+        engine_kwargs: dict[str, Any] = {}
+        if not is_sqlite:
+            # Drop connections a serverless instance left behind, and don't
+            # keep a pool across invocations that share Neon's pooler.
+            engine_kwargs["pool_pre_ping"] = True
+            from phishing.settings import serverless
+
+            if serverless():
+                engine_kwargs["poolclass"] = NullPool
+        _engine = create_engine(url, future=True, connect_args=connect_args, **engine_kwargs)
         if is_sqlite:
             _enable_sqlite_wal(_engine)
         _Session = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
@@ -280,7 +296,25 @@ def _enable_sqlite_wal(engine) -> None:
 
 
 def init_db() -> None:
-    Base.metadata.create_all(get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    _ensure_scan_job_started_at(engine)
+
+
+def _ensure_scan_job_started_at(engine) -> None:
+    """Add ``started_at`` on an existing SQLite file.
+
+    ``create_all`` does not alter tables that already exist. Postgres gets
+    the column from migration 0005, which CI runs before a serverless deploy.
+    Local, Docker, and Render still boot through ``init_db``.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as conn:
+        rows = conn.execute(text("PRAGMA table_info(scan_jobs)")).all()
+        if not rows or any(row[1] == "started_at" for row in rows):
+            return
+        conn.execute(text("ALTER TABLE scan_jobs ADD COLUMN started_at DATETIME"))
 
 
 @contextmanager
@@ -703,7 +737,61 @@ def update_scan_job(
         if row is None:
             return
         row.status = status
+        if status == "running" and row.started_at is None:
+            row.started_at = datetime.now(UTC)
         if scan_id is not None:
             row.scan_id = scan_id
         if error is not None:
             row.error = error[:2000]
+
+
+def count_open_scan_jobs() -> int:
+    """Jobs that are queued or running. The durable queue cap reads this."""
+    with session_scope() as session:
+        count = session.scalar(
+            select(func.count())
+            .select_from(ScanJob)
+            .where(ScanJob.status.in_(("queued", "running")))
+        )
+        return int(count or 0)
+
+
+def claim_scan_job(job_id: str) -> ScanJob | None:
+    """Move a queued job to running. A second claim finds nothing and returns None."""
+    now = datetime.now(UTC)
+    with session_scope() as session:
+        # RETURNING, not rowcount: SQLite often reports rowcount as -1.
+        claimed = session.scalar(
+            update(ScanJob)
+            .where(ScanJob.id == job_id, ScanJob.status == "queued")
+            .values(status="running", started_at=now)
+            .returning(ScanJob.id)
+        )
+        if claimed is None:
+            return None
+        row = session.get(ScanJob, job_id)
+        if row is None:
+            return None
+        session.expunge(row)
+        return row
+
+
+def fail_stale_running_jobs(max_age_seconds: int = 300) -> int:
+    """Mark running jobs whose worker disappeared as timed out.
+
+    A killed function cannot write the error itself. The cron sweep does,
+    so the UI stops polling.
+    """
+    cutoff = datetime.now(UTC) - timedelta(seconds=max_age_seconds)
+    with session_scope() as session:
+        ids = session.scalars(
+            update(ScanJob)
+            .where(
+                ScanJob.status == "running",
+                ScanJob.started_at.is_not(None),
+                ScanJob.started_at < cutoff,
+            )
+            .values(status="error", error="Scan timed out.")
+            .returning(ScanJob.id)
+        ).all()
+        return len(ids)

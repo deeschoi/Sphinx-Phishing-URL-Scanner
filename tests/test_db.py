@@ -267,3 +267,46 @@ def test_open_anonymous_history_is_scoped_to_the_caller(db, monkeypatch):
     stats = db.scan_stats(client_key="1.1.1.1")
     assert stats["total_scans"] == 1
     assert stats["total_scans_all_time"] == 1
+
+
+def test_serverless_postgres_uses_a_null_pool(monkeypatch):
+    from sqlalchemy.pool import NullPool
+
+    from phishing import db as db_module
+
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.setenv(
+        "PHISHING_DATABASE_URL",
+        "postgresql+psycopg2://phishing:secret@localhost:5432/phishing",
+    )
+    monkeypatch.setattr(db_module, "_engine", None)
+    monkeypatch.setattr(db_module, "_Session", None)
+    try:
+        engine = db_module.get_engine()
+        assert isinstance(engine.pool, NullPool)
+        assert engine.pool._pre_ping is True
+    finally:
+        monkeypatch.setattr(db_module, "_engine", None)
+        monkeypatch.setattr(db_module, "_Session", None)
+
+
+def test_init_db_adds_started_at_on_an_existing_sqlite_file(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine, text
+
+    from phishing import db as db_module
+
+    url = f"sqlite:///{tmp_path / 'old.db'}"
+    monkeypatch.delenv("VERCEL", raising=False)
+    monkeypatch.delenv("SPHINX_SERVERLESS", raising=False)
+    monkeypatch.setenv("PHISHING_DATABASE_URL", url)
+    raw = create_engine(url)
+    with raw.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE scan_jobs (id VARCHAR(36) PRIMARY KEY, status VARCHAR(16))")
+        )
+    monkeypatch.setattr(db_module, "_engine", None)
+    monkeypatch.setattr(db_module, "_Session", None)
+    db_module.init_db()
+    with db_module.get_engine().connect() as conn:
+        columns = [row[1] for row in conn.execute(text("PRAGMA table_info(scan_jobs)"))]
+    assert "started_at" in columns
