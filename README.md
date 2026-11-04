@@ -42,7 +42,7 @@ Git deploys are off. [`.github/workflows/deploy-vercel.yml`](.github/workflows/d
 
 Preview and Production use different Neon branches, so a preview never writes production telemetry. Preview deployments have Deployment Protection turned on (`scripts/ensure_preview_protection.sh`) so they are not an anonymous open proxy. Production deployment URLs stay reachable: QStash and the smoke test call the staged URL before promote.
 
-`vercel.json` schedules maintenance every 10 minutes. That schedule needs a Vercel plan that allows it. A Hobby account often accepts a cron only once a day; if the deploy rejects the schedule, the maintenance route is still there to call by hand.
+`vercel.json` runs maintenance once a day at 08:00 UTC, which is what a Vercel Hobby plan allows. A Pro plan can use a tighter schedule. The maintenance route is still there to call by hand.
 
 Dashboard env for Production (never commit secrets, and never set `GROQ_API_KEY` or `SPHINX_API_KEY`):
 
