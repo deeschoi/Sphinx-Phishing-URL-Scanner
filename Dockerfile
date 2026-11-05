@@ -60,6 +60,7 @@ WORKDIR /app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 gosu \
+    && apt-get install -y --only-upgrade apt libapt-pkg7.0 \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /usr/local/lib/python3.12/site-packages/pip \
               /usr/local/lib/python3.12/site-packages/pip-*.dist-info \
