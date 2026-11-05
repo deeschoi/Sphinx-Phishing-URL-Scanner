@@ -42,7 +42,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install -e ".[dev]"
+          # The package metadata tracks the function dependency set. --no-deps
+          # keeps the training stack from this file, including xgboost.
+          pip install -e ".[dev]" --no-deps
+          pip install "pytest==9.1.1" "httpx==0.28.1" "fakeredis[lua]==2.40.0"
 
       - name: Test
         run: pytest -m "not network" -q
@@ -82,7 +85,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install -e ".[dev]"
+          # The package metadata tracks the function dependency set. --no-deps
+          # keeps the training stack from this file, including xgboost.
+          pip install -e ".[dev]" --no-deps
+          pip install "pytest==9.1.1" "httpx==0.28.1" "fakeredis[lua]==2.40.0"
 
       - name: Import every entry point
         run: python scripts/check_imports.py
@@ -236,7 +242,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install -e ".[dev]"
+          # The package metadata tracks the function dependency set. --no-deps
+          # keeps the training stack from this file, including xgboost.
+          pip install -e ".[dev]" --no-deps
+          pip install "pytest==9.1.1" "httpx==0.28.1" "fakeredis[lua]==2.40.0"
 
       - name: Train if the artifact is missing
         run: |

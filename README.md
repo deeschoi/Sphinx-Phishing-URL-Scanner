@@ -67,7 +67,7 @@ Dashboard env for Production (never commit secrets, and never set `GROQ_API_KEY`
 | `SPHINX_LEASE_TTL_SECONDS` | `60` (same as the function `maxDuration`) |
 | `OMP_NUM_THREADS` | `1` (`app.py` sets this when it is unset) |
 
-The function is trained and installed from [`requirements-serve.txt`](requirements-serve.txt) (`xgboost-cpu`, no shap). Docker and Render keep using [`requirements.txt`](requirements.txt).
+The function is installed from [`requirements-serve.txt`](requirements-serve.txt) and [`uv.lock`](uv.lock) (`xgboost-cpu`, no shap). There is no custom install command, so Vercel can keep that bundle under its size limit. Docker and Render keep using [`requirements.txt`](requirements.txt).
 
 ## Public demo (Render)
 
@@ -104,7 +104,8 @@ Python 3.11+ (3.12 matches the Docker image).
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-pip install -e ".[dev]"
+pip install -e ".[dev]" --no-deps
+pip install "pytest==9.1.1" "httpx==0.28.1" "fakeredis[lua]==2.40.0"
 
 # train the served model if artifacts/model.joblib is missing
 phishing train
