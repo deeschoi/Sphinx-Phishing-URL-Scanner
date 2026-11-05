@@ -1,6 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm ci --prefix web && npm run build --prefix web && rm -rf public && mkdir -p public && cp -a web/dist/. public/",
+  "build": {
+    "env": {
+      "VERCEL_SUPPORT_LARGE_FUNCTIONS": "1"
+    }
+  },
   "git": {
     "deploymentEnabled": false
   },

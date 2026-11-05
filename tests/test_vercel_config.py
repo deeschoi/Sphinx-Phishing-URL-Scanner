@@ -22,6 +22,7 @@ def test_cdn_policy_matches_the_api_and_deploys_only_from_ci():
     assert "camera=()" in headers["Permissions-Policy"]
     assert headers["Strict-Transport-Security"].startswith("max-age=")
     assert "installCommand" not in config
+    assert config["build"]["env"]["VERCEL_SUPPORT_LARGE_FUNCTIONS"] == "1"
     assert config["git"]["deploymentEnabled"] is False
     assert config["functions"]["app.py"]["maxDuration"] == 60
     assert "artifacts/**" in config["functions"]["app.py"]["includeFiles"]

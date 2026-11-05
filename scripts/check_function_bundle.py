@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Fail the deploy if the Python function is over Vercel's uncompressed limit.
 
-The standard Python limit is 500 MB unzipped. Large Functions is a separate
-opt-in and is not assumed here. After ``vercel build``, the function lives
-under ``.vercel/output/functions/*.func``.
+Large functions, which this project opts into, allow up to 5 GB unzipped.
+500 MB is the guard against accidentally packing the NCCL wheel. After
+``vercel build``, the function lives under ``.vercel/output/functions/*.func``.
 """
 
 from __future__ import annotations

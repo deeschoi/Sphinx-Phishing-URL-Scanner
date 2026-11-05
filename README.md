@@ -67,7 +67,7 @@ Dashboard env for Production (never commit secrets, and never set `GROQ_API_KEY`
 | `SPHINX_LEASE_TTL_SECONDS` | `60` (same as the function `maxDuration`) |
 | `OMP_NUM_THREADS` | `1` (`app.py` sets this when it is unset) |
 
-The function is installed from [`requirements-serve.txt`](requirements-serve.txt) and [`uv.lock`](uv.lock) (`xgboost-cpu`, no shap). There is no custom install command, so Vercel can keep that bundle under its size limit. Docker and Render keep using [`requirements.txt`](requirements.txt).
+The function is installed from [`requirements-serve.txt`](requirements-serve.txt) and [`uv.lock`](uv.lock) (`xgboost-cpu`, no shap). Those wheels are about 330 MB unzipped, past the 225 MB standard pack limit, so the project opts into large functions. Docker and Render keep using [`requirements.txt`](requirements.txt).
 
 ## Public demo (Render)
 

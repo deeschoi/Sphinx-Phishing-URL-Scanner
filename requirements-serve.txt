@@ -14,10 +14,11 @@
 # install there and on ubuntu-latest. Do not run `vercel build` on macOS:
 # the CLI would vendor host wheels the function cannot load.
 # Unzipped manylinux_2_28 wheels, including dependencies: about 330 MB.
-# A custom installCommand in vercel.json disables Vercel's size optimizer and
-# the build then fails at 225 MB. Leave installCommand unset and keep uv.lock
-# next to this file so the oversized wheels are installed at runtime instead
-# of being zipped into the function.
+# That is over the 225 MB standard pack limit. vercel.json sets
+# VERCEL_SUPPORT_LARGE_FUNCTIONS=1 so the build can ship the wheels.
+# Leave installCommand unset. A saved Install Command in the project
+# settings is what makes the builder report this 330 MB tree as a hard
+# failure when large functions are off.
 numpy==1.26.4
 pandas==2.2.2
 scikit-learn==1.9.1
