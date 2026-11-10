@@ -24,6 +24,10 @@ def test_cdn_policy_matches_the_api_and_deploys_only_from_ci():
     assert config["git"]["deploymentEnabled"] is False
     assert config["functions"]["app.py"]["maxDuration"] == 60
     assert "artifacts/**" in config["functions"]["app.py"]["includeFiles"]
+    # The function serves the UI itself: CLI 65 routes the SPA rewrite to the
+    # app, so a function without web/dist answers "/" with its 503 page.
+    assert "web/dist/**" in config["functions"]["app.py"]["includeFiles"]
+    assert "web/dist/**" not in config["functions"]["app.py"]["excludeFiles"]
     assert config["crons"][0]["path"] == "/api/internal/maintenance"
     assert config["crons"][0]["schedule"] == "0 8 * * *"
     sources = [rule["source"] for rule in config["rewrites"]]
@@ -62,3 +66,16 @@ def test_bundle_check_accepts_the_committed_lock():
     spec.loader.exec_module(module)
     assert module.lock_errors() == []
     assert module.install_command_errors() == []
+
+
+def test_bundle_check_requires_the_frontend_in_the_function():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "check_function_bundle", ROOT / "scripts" / "check_function_bundle.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    errors = module.frontend_errors()
+    # web/dist exists only after a frontend build; the config half must pass.
+    assert not any("vercel.json" in error for error in errors)

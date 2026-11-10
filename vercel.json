@@ -7,8 +7,8 @@
   "functions": {
     "app.py": {
       "maxDuration": 60,
-      "includeFiles": "{artifacts/**,reports/*.json}",
-      "excludeFiles": "{datasets/**,research/**,web/node_modules/**,web/dist/**,web/src/**,public/**,tests/**,.venv/**,reports/figures/**}"
+      "includeFiles": "{artifacts/**,reports/*.json,web/dist/**}",
+      "excludeFiles": "{datasets/**,research/**,web/node_modules/**,web/src/**,public/**,tests/**,.venv/**,reports/figures/**}"
     }
   },
   "crons": [
