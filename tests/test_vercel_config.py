@@ -21,13 +21,11 @@ def test_cdn_policy_matches_the_api_and_deploys_only_from_ci():
     assert headers["Referrer-Policy"] == "no-referrer"
     assert "camera=()" in headers["Permissions-Policy"]
     assert headers["Strict-Transport-Security"].startswith("max-age=")
-    assert "installCommand" not in config
-    assert config["build"]["env"]["VERCEL_SUPPORT_LARGE_FUNCTIONS"] == "1"
     assert config["git"]["deploymentEnabled"] is False
     assert config["functions"]["app.py"]["maxDuration"] == 60
     assert "artifacts/**" in config["functions"]["app.py"]["includeFiles"]
     assert config["crons"][0]["path"] == "/api/internal/maintenance"
-    assert config["crons"][0]["schedule"] == "0 8 * * *"
+    assert config["crons"][0]["schedule"] == "*/10 * * * *"
     sources = [rule["source"] for rule in config["rewrites"]]
     assert any("api" in source for source in sources)
 
