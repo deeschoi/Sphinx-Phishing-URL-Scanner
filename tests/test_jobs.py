@@ -264,6 +264,73 @@ def test_maintenance_times_out_a_stuck_running_job(jobs_env):
     assert db.fail_stale_running_jobs() == 0
 
 
+def _age_running_job(db, job_id: str, *, minutes: int) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    with db.session_scope() as session:
+        row = session.get(db.ScanJob, job_id)
+        assert row is not None
+        row.started_at = datetime.now(UTC) - timedelta(minutes=minutes)
+
+
+def test_reading_a_stale_job_times_it_out_and_a_fresh_one_stays_running(jobs_env):
+    db, jobs = jobs_env
+    stale = db.create_scan_job("https://example.com/stale")
+    fresh = db.create_scan_job("https://example.com/fresh")
+    assert db.claim_scan_job(stale) is not None
+    assert db.claim_scan_job(fresh) is not None
+    _age_running_job(db, stale, minutes=10)
+    payload = jobs.job_status(stale)
+    assert payload is not None
+    assert payload["status"] == "error"
+    assert payload["error"] == "Scan timed out."
+    assert jobs.job_status(fresh)["status"] == "running"
+
+
+def test_batch_status_times_out_only_the_stale_member(jobs_env):
+    db, jobs = jobs_env
+    batch = "batch-stale"
+    stale = db.create_scan_job("https://example.com/stale", batch_id=batch)
+    other = db.create_scan_job("https://example.com/other", batch_id=batch)
+    assert db.claim_scan_job(stale) is not None
+    _age_running_job(db, stale, minutes=10)
+    payload = jobs.batch_status(batch)
+    assert payload is not None
+    by_id = {job["job_id"]: job for job in payload["jobs"]}
+    assert by_id[stale]["status"] == "error"
+    assert by_id[stale]["error"] == "Scan timed out."
+    assert by_id[other]["status"] == "queued"
+
+
+def test_enqueue_reaps_a_stale_job_before_the_queue_cap(jobs_env, monkeypatch):
+    db, jobs = jobs_env
+    monkeypatch.setenv("SPHINX_JOB_BACKEND", "qstash")
+    monkeypatch.setattr(jobs, "JOB_WORKERS", 1)
+    monkeypatch.setattr(jobs, "JOB_QUEUE_MAX", 0)
+    monkeypatch.setattr(jobs, "_publish_job", lambda job_id: None)
+    stuck = db.create_scan_job("https://example.com/stuck")
+    assert db.claim_scan_job(stuck) is not None
+    _age_running_job(db, stuck, minutes=10)
+    new_id = jobs.enqueue_scan_job("https://example.com/new")
+    assert db.get_scan_job(stuck).status == "error"
+    assert jobs.job_status(new_id)["status"] == "queued"
+    with pytest.raises(jobs.JobQueueFull):
+        jobs.enqueue_scan_job("https://example.com/another")
+
+
+def test_a_live_running_job_still_holds_its_queue_slot(jobs_env, monkeypatch):
+    db, jobs = jobs_env
+    monkeypatch.setenv("SPHINX_JOB_BACKEND", "qstash")
+    monkeypatch.setattr(jobs, "JOB_WORKERS", 1)
+    monkeypatch.setattr(jobs, "JOB_QUEUE_MAX", 0)
+    monkeypatch.setattr(jobs, "_publish_job", lambda job_id: None)
+    live = db.create_scan_job("https://example.com/live")
+    assert db.claim_scan_job(live) is not None
+    with pytest.raises(jobs.JobQueueFull):
+        jobs.enqueue_scan_job("https://example.com/new")
+    assert db.get_scan_job(live).status == "running"
+
+
 def _qstash_signature(body: str, url: str, key: str) -> str:
     import base64
     import hashlib

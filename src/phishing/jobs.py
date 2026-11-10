@@ -20,10 +20,12 @@ from phishing.db import (
     claim_scan_job,
     count_open_scan_jobs,
     create_scan_job,
+    fail_stale_running_jobs,
     get_scan_job,
     list_batch_jobs,
     purge_old_scan_jobs,
     record_scan,
+    running_job_is_stale,
     scan_by_id,
     update_scan_job,
 )
@@ -133,6 +135,17 @@ def _guarded_run(job_id: str) -> None:
         _release()
 
 
+def _reap_stale_jobs() -> None:
+    """Free queue slots held by workers that already died.
+
+    Failure here must not refuse a new scan. The daily cron repeats the work.
+    """
+    try:
+        fail_stale_running_jobs()
+    except Exception:
+        log.exception("could not time out stale scan jobs")
+
+
 def enqueue_scan_job(
     url: str,
     *,
@@ -140,6 +153,8 @@ def enqueue_scan_job(
     client_key: str = "",
     batch_id: str | None = None,
 ) -> str:
+    # Before the cap, so a killed function does not hold a slot until cron.
+    _reap_stale_jobs()
     if job_backend() == "qstash":
         _, job_ids = _enqueue_durable(
             [url], timeout=timeout, client_key=client_key, batch_id=batch_id
@@ -178,6 +193,7 @@ def enqueue_batch(
     """
     if not urls:
         return str(uuid.uuid4()), []
+    _reap_stale_jobs()
     if job_backend() == "qstash":
         return _enqueue_durable(urls, timeout=timeout, client_key=client_key)
     if not _reserve(len(urls)):
@@ -209,6 +225,13 @@ def _job_payload(job_id: str) -> dict[str, Any] | None:
     row = get_scan_job(job_id)
     if row is None:
         return None
+    # One compare on the row already loaded. The table update runs only after
+    # this job itself is past the timeout, not on every poll.
+    if running_job_is_stale(row):
+        _reap_stale_jobs()
+        fresh = get_scan_job(job_id)
+        if fresh is not None:
+            row = fresh
     payload = row.to_dict()
     if row.status == "done":
         result = (
@@ -233,6 +256,8 @@ def batch_status(batch_id: str) -> dict[str, Any] | None:
     rows = list_batch_jobs(batch_id)
     if not rows:
         return None
+    if any(running_job_is_stale(row) for row in rows):
+        _reap_stale_jobs()
     jobs = [job for job in (_job_payload(row.id) for row in rows) if job is not None]
     n = len(jobs)
     n_done = sum(1 for job in jobs if job["status"] == "done")

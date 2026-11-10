@@ -631,7 +631,9 @@ def _require_cron(request: Request) -> None:
 def maintain_scan_jobs(request: Request) -> dict:
     """Time out stuck jobs and delete old ones.
 
-    Vercel Cron calls GET. POST is the same work for a manual trigger.
+    Vercel Cron calls GET once a day. POST is the same work for a manual
+    trigger. Both require ``CRON_SECRET``. A stuck job is also timed out
+    when a scan is queued and when that job's status is read.
     """
     _require_cron(request)
     timed_out = fail_stale_running_jobs()

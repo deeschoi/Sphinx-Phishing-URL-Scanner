@@ -225,9 +225,9 @@ class ScanJob(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     client_key: Mapped[str] = mapped_column(String(64), default="")
     timeout: Mapped[int] = mapped_column(Integer, default=8)
-    # Set when a worker claims the row. Maintenance times out ``running``
-    # rows from this clock, not from ``created_at``, so a job can wait in
-    # the queue without being declared dead.
+    # Set when a worker claims the row. Stale ``running`` rows are timed out
+    # from this clock, not from ``created_at``, so a job can wait in the
+    # queue without being declared dead.
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     def to_dict(self) -> dict[str, Any]:
@@ -776,11 +776,33 @@ def claim_scan_job(job_id: str) -> ScanJob | None:
         return row
 
 
-def fail_stale_running_jobs(max_age_seconds: int = 300) -> int:
+# A function is killed at ``maxDuration`` (60s). Five minutes leaves room for
+# that kill and for QStash's last retry before a row is declared dead.
+STALE_RUNNING_JOB_SECONDS = 300
+
+
+def running_job_is_stale(
+    row: ScanJob,
+    *,
+    now: datetime | None = None,
+    max_age_seconds: int = STALE_RUNNING_JOB_SECONDS,
+) -> bool:
+    """True when a running worker has been gone longer than the timeout."""
+    if row.status != "running" or row.started_at is None:
+        return False
+    started = row.started_at
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    current = now or datetime.now(UTC)
+    return started < current - timedelta(seconds=max_age_seconds)
+
+
+def fail_stale_running_jobs(max_age_seconds: int = STALE_RUNNING_JOB_SECONDS) -> int:
     """Mark running jobs whose worker disappeared as timed out.
 
-    A killed function cannot write the error itself. The cron sweep does,
-    so the UI stops polling.
+    A killed function cannot write the error itself. The daily cron is the
+    idle backstop. Queueing a scan, and reading a job that is already stale,
+    run the same update so the UI and the queue cap do not wait for that cron.
     """
     cutoff = datetime.now(UTC) - timedelta(seconds=max_age_seconds)
     with session_scope() as session:
