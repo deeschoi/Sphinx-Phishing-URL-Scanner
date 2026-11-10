@@ -58,9 +58,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Upgrade every package already in the slim base. A pinned digest does not
+# move when Debian ships a security fix, and the image scan fails on those.
+# zlib1g 1:1.3.dfsg+really1.3.1-1+b1 is CVE-2026-76844 and CVE-2026-85091;
+# trixie-security has 1:1.3.dfsg+really1.3.1-1+deb13u1.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 gosu \
-    && apt-get install -y --only-upgrade apt libapt-pkg7.0 \
+    && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /usr/local/lib/python3.12/site-packages/pip \
               /usr/local/lib/python3.12/site-packages/pip-*.dist-info \
