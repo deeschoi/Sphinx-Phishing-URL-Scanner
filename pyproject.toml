@@ -11,10 +11,7 @@ requires-python = ">=3.11"
 dynamic = ["dependencies"]
 
 [tool.setuptools.dynamic]
-dependencies = {file = ["requirements-serve.txt"]}
-
-[tool.uv]
-environments = ["python_version >= '3.12'"]
+dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.packages.find]
 where = ["src"]
