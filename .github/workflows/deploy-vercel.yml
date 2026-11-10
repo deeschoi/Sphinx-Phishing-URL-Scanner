@@ -44,9 +44,10 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      # requirements-serve.txt unpacks to ~330 MB. The custom install command
-      # blocks Vercel's 225 MB packing path; this opts the build into large
-      # functions (up to 5 GB). scripts/vercel_build.sh sets it again.
+      # uv.lock (the requirements-serve.txt set) unpacks to ~330 MB, over the
+      # 225 MB standard limit. This opts the build into large functions (up
+      # to 5 GB), which install the wheels from uv.lock outside the .func
+      # directory. scripts/vercel_build.sh sets it again.
       VERCEL_SUPPORT_LARGE_FUNCTIONS: "1"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

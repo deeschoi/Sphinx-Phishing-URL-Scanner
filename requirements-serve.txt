@@ -13,11 +13,15 @@
 # Vercel's build image is Amazon Linux 2023 (glibc 2.34), so those wheels
 # install there and on ubuntu-latest. Do not run `vercel build` on macOS:
 # the CLI would vendor host wheels the function cannot load.
-# Unzipped manylinux_2_28 wheels, including dependencies: about 320 MiB.
-# With the custom install command, the builder's default cap is 225 MB.
-# The deploy sets VERCEL_SUPPORT_LARGE_FUNCTIONS=1 (limit 5 GB). The
-# post-build check still fails the bundle above 500 MiB so the NCCL wheel
-# cannot slip back in.
+# Unzipped manylinux_2_28 wheels, including dependencies: about 320 MiB,
+# over the 225 MB standard cap. The deploy sets
+# VERCEL_SUPPORT_LARGE_FUNCTIONS=1 (limit 5 GB).
+#
+# pyproject.toml reads its dependencies from this file and the Vercel
+# builder installs them from uv.lock. Run `uv lock` after any change here.
+# Do not add an Install Command: `pip install -r` fills a local venv that a
+# large function never ships. scripts/check_function_bundle.py fails the
+# deploy on an Install Command or an NVIDIA/NCCL wheel in uv.lock.
 numpy==1.26.4
 pandas==2.2.2
 scikit-learn==1.9.1

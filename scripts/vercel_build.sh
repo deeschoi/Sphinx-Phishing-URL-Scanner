@@ -1,13 +1,13 @@
 #!/bin/sh
 # Build a production Vercel output.
 #
-# Dependencies are installed by vercel.json's installCommand
-# (`pip install -r requirements-serve.txt`). That set is about 330 MB
-# unzipped. A custom install command disables Vercel's automatic packing
-# and the builder then refuses anything over 225 MB unless
-# VERCEL_SUPPORT_LARGE_FUNCTIONS=1. Large functions allow up to 5 GB.
-# Keep the install command: pyproject.toml still depends on
-# requirements.txt, and that file pulls in the NCCL wheel.
+# The builder installs the function from uv.lock (the requirements-serve.txt
+# set plus this project, editable). That set is about 330 MB unzipped, over
+# the 225 MB standard limit, so VERCEL_SUPPORT_LARGE_FUNCTIONS=1 opts into
+# large functions, which keep the wheels outside the .func directory.
+# Do not set an Install Command, in vercel.json or the project settings:
+# `pip install` fills a local venv that large functions never ship, and the
+# deploy then crashes on import (FUNCTION_INVOCATION_FAILED).
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root"
@@ -26,6 +26,9 @@ if ! command -v uv >/dev/null 2>&1; then
   echo "uv is not on PATH. The Deploy Vercel workflow installs it with astral-sh/setup-uv; locally, install uv before vercel build." >&2
   exit 1
 fi
+
+# A stale lock would install a dependency set nobody reviewed.
+uv lock --check
 
 vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
 

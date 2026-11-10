@@ -36,3 +36,29 @@ def test_vercel_entrypoint_is_the_root_app():
     import app
 
     assert app.app.title
+
+
+def test_function_installs_from_uv_lock_not_a_custom_command():
+    """A custom Install Command fills a local venv that large functions never
+    ship: the deploy built, uploaded 3.8 MB, and crashed on import."""
+    import tomllib
+
+    config = json.loads((ROOT / "vercel.json").read_text(encoding="utf-8"))
+    assert "installCommand" not in config
+
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    deps = project["tool"]["setuptools"]["dynamic"]["dependencies"]["file"]
+    assert deps == ["requirements-serve.txt"]
+
+
+def test_bundle_check_accepts_the_committed_lock():
+    """uv.lock must install the project and the serve stack, never NCCL."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "check_function_bundle", ROOT / "scripts" / "check_function_bundle.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.lock_errors() == []
+    assert module.install_command_errors() == []

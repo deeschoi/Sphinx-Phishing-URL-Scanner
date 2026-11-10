@@ -11,7 +11,13 @@ requires-python = ">=3.11"
 dynamic = ["dependencies"]
 
 [tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}
+# The Vercel function installs the package from uv.lock, so its metadata
+# tracks the serve set. CI, Docker and the deploy training step install the
+# package with --no-deps and take the training stack from requirements.txt.
+dependencies = {file = ["requirements-serve.txt"]}
+
+[tool.uv]
+environments = ["python_version >= '3.12'"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
