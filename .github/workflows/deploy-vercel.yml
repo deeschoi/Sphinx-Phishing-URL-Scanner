@@ -72,7 +72,10 @@ jobs:
           node-version: "22"
 
       - name: Install the Vercel CLI
-        run: npm install -g vercel@48.12.1
+        # 48.12.1 rejects `functions.app.py`: it only matches files inside
+        # `api/`. 65.14.0 accepts that pattern for the FastAPI entrypoint and
+        # still has `vercel deploy --skip-domain`.
+        run: npm install -g vercel@65.14.0
 
       - name: Protect preview deployments
         run: sh scripts/ensure_preview_protection.sh
