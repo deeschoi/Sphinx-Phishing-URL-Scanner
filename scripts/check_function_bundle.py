@@ -12,6 +12,8 @@ builder actually uses:
   would install into a local venv that is never shipped;
 * ``uv.lock`` installs the project itself and the serve stack, and no NVIDIA
   or NCCL wheel;
+* ``web/dist/index.html`` exists, because the function serves the UI itself
+  (the CDN rewrite routes to the app), and ``vercel.json`` bundles it;
 * the ``.func`` directory is still under 500 MiB uncompressed.
 """
 
@@ -54,6 +56,17 @@ def install_command_errors() -> list[str]:
     return errors
 
 
+def frontend_errors() -> list[str]:
+    config = json.loads((ROOT / "vercel.json").read_text(encoding="utf-8"))
+    function = config.get("functions", {}).get("app.py", {})
+    errors = []
+    if "web/dist" not in function.get("includeFiles", ""):
+        errors.append("vercel.json does not include web/dist in the function")
+    if not (ROOT / "web" / "dist" / "index.html").is_file():
+        errors.append("web/dist/index.html is missing: the build did not produce the UI")
+    return errors
+
+
 def lock_errors() -> list[str]:
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     names = {package["name"] for package in lock.get("package", [])}
@@ -82,7 +95,9 @@ def function_errors() -> list[str]:
 
 
 def main() -> int:
-    errors = install_command_errors() + lock_errors() + function_errors()
+    errors = (
+        install_command_errors() + lock_errors() + frontend_errors() + function_errors()
+    )
     for error in errors:
         print(error, file=sys.stderr)
     return 1 if errors else 0
