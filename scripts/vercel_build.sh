@@ -17,6 +17,13 @@ if [ -z "${VERCEL_TOKEN:-}" ]; then
   exit 1
 fi
 
+# CLI 65 installs the Python runtime with uv. A missing binary fails the
+# build as `[UV_ERROR] uv is required but was not found in PATH`.
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uv is not on PATH. The Deploy Vercel workflow installs it with astral-sh/setup-uv; locally, install uv before vercel build." >&2
+  exit 1
+fi
+
 vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
 vercel build --prod --token "$VERCEL_TOKEN"
 python scripts/check_function_bundle.py

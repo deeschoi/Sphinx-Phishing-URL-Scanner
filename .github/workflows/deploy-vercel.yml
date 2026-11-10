@@ -80,6 +80,16 @@ jobs:
       - name: Protect preview deployments
         run: sh scripts/ensure_preview_protection.sh
 
+      - name: Install uv
+        # CLI 65 builds the Python function with uv (uv.lock / requirements).
+        # ubuntu-latest does not ship it, so `vercel build` exits with
+        # `[UV_ERROR] uv is required but was not found in PATH`.
+        # Cache is off: this job only needs the binary, and the token has
+        # contents: read, which cannot write the Actions cache.
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+
       - name: Build and refuse an oversized function
         run: sh scripts/vercel_build.sh
 
