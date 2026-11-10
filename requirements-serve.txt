@@ -13,20 +13,14 @@
 # Vercel's build image is Amazon Linux 2023 (glibc 2.34), so those wheels
 # install there and on ubuntu-latest. Do not run `vercel build` on macOS:
 # the CLI would vendor host wheels the function cannot load.
-# Unzipped manylinux_2_28 wheels, including dependencies: about 330 MB.
-# That is over the 225 MB standard pack limit. vercel.json sets
-# VERCEL_SUPPORT_LARGE_FUNCTIONS=1 so the build can ship the wheels.
-# Leave installCommand unset. A saved Install Command in the project
-# settings is what makes the builder report this 330 MB tree as a hard
-# failure when large functions are off.
+# Unzipped manylinux_2_28 wheels, including dependencies: about 320 MiB.
+# The standard Python function limit is 500 MiB uncompressed.
 numpy==1.26.4
 pandas==2.2.2
 scikit-learn==1.9.1
 scipy==1.17.1
 joblib==1.4.2
-# 3.4.1 requires Python 3.12, which is the Vercel runtime. The lock is
-# solved for 3.12 only so the 2.1.4 Linux wheel's NCCL library stays out.
-xgboost-cpu==3.4.1; python_version >= "3.12"
+xgboost-cpu==3.4.1
 dnspython==2.9.0
 tldextract==5.1.3
 requests==2.34.2
