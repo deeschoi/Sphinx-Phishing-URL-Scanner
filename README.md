@@ -59,6 +59,7 @@ Dashboard env for Production (never commit secrets, and never set `GROQ_API_KEY`
 | `SPHINX_RATE_LIMIT_BACKEND` | `redis` |
 | `REDIS_URL` | Upstash `rediss://` URL |
 | `SPHINX_JOB_BACKEND` | `qstash` |
+| `QSTASH_URL` | the token's region endpoint, e.g. `https://qstash-us-east-1.upstash.io` (tokens are regional) |
 | `QSTASH_TOKEN` | Upstash token |
 | `QSTASH_CURRENT_SIGNING_KEY` | current signing key |
 | `QSTASH_NEXT_SIGNING_KEY` | next signing key |
@@ -167,6 +168,7 @@ phishing scan --tier A https://example.com   # URL string only, no network fetch
 | `SPHINX_BATCH_MAX_URLS` | `25` | Cap on `POST /api/scan/batch`, clamped to `SPHINX_SCAN_RATE_PER_MINUTE` (a batch of N spends N) |
 | `SPHINX_ENABLE_DOCS` | unset | Set to `1` to publish `/docs`. Off by default |
 | `SPHINX_TRUST_PROXY_HEADERS` | `0` | Honour `X-Forwarded-For` only behind a proxy you control |
+| `QSTASH_URL` | `https://qstash.upstash.io` | Regional QStash endpoint. It must match the token's region; a `/v2/publish` suffix is stripped |
 | `QSTASH_TOKEN` | unset | Publish token for `SPHINX_JOB_BACKEND=qstash` |
 | `QSTASH_CURRENT_SIGNING_KEY` | unset | Verifies `POST /api/internal/scan-jobs/run` |
 | `QSTASH_NEXT_SIGNING_KEY` | unset | Accepted during a signing-key rotation |

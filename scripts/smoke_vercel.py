@@ -48,6 +48,9 @@ def request(
             return response.status, dict(response.headers), response.read()
     except urllib.error.HTTPError as exc:
         return exc.code, dict(exc.headers), exc.read()
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        # Status 0: no HTTP answer. A burst thread must not crash the script.
+        return 0, {}, repr(exc).encode()
 
 
 def fail(message: str) -> None:
@@ -75,6 +78,7 @@ def require_csp(base: str, path: str) -> None:
 def wait_until(url: str, label: str) -> dict:
     deadline = time.monotonic() + 120
     last = ""
+    raw = b""
     while time.monotonic() < deadline:
         status, _headers, raw = request("GET", url, timeout=30)
         if status != 200:
@@ -86,7 +90,13 @@ def wait_until(url: str, label: str) -> dict:
                 fail(f"{label} finished as {last}: {raw[:500]!r}")
             return payload
         time.sleep(2)
-    fail(f"{label} still {last} after 120s")
+    hint = (
+        " QStash never reached the worker: check the signing keys and the"
+        " QStash console logs/DLQ."
+        if last == "queued"
+        else ""
+    )
+    fail(f"{label} still {last} after 120s: {raw[:500]!r}.{hint}")
     return {}
 
 
@@ -103,7 +113,7 @@ def burst(base: str, count: int, forwarded: str | None = None) -> list[int]:
         )
         return status
 
-    with ThreadPoolExecutor(max_workers=count) as pool:
+    with ThreadPoolExecutor(max_workers=min(count, 40)) as pool:
         return list(pool.map(lambda _n: once(), range(count)))
 
 
@@ -118,7 +128,23 @@ def main() -> int:
     ready = json.loads(raw)
     if ready.get("rate_limit") != "redis" or ready.get("jobs") != "qstash":
         fail(f"/api/ready is not on the serverless backends: {ready}")
-    print("ready", ready.get("status"), ready.get("rate_limit"), ready.get("jobs"))
+    if ready.get("jobs_config") != "ok":
+        fail(f"/api/ready jobs_config is {ready.get('jobs_config')!r}: {ready}")
+    staged_host = base.split("://", 1)[-1]
+    if ready.get("worker_host") != staged_host:
+        # QStash would deliver this deploy's jobs to another deployment, and
+        # the job checks below would test the old build.
+        fail(
+            f"QStash worker host is {ready.get('worker_host')!r}, not {staged_host!r}."
+            " Unset SPHINX_WORKER_URL and SPHINX_PUBLIC_BASE_URL in Production."
+        )
+    rate = int(ready.get("scan_rate_per_minute") or 0)
+    if rate < 4:
+        fail(f"scan_rate_per_minute={rate} leaves no room for the batch check")
+    print(
+        "ready", ready.get("status"), ready.get("rate_limit"), ready.get("jobs"),
+        "qstash", ready.get("qstash_host"), "rate", rate,
+    )
 
     require_csp(base, "/")
     require_csp(base, "/api/health")
@@ -153,7 +179,11 @@ def main() -> int:
         "POST", base + "/api/scan/jobs", {"url": "https://example.org"}, timeout=30
     )
     if status != 202:
-        fail(f"job enqueue returned {status}: {raw[:300]!r}")
+        reason = header(_headers, "X-Sphinx-Queue-Error")
+        fail(
+            f"job enqueue returned {status} (queue error: {reason or 'n/a'}):"
+            f" {raw[:300]!r}. Search the function logs for 'could not publish scan job'."
+        )
     job_id = json.loads(raw)["job_id"]
     wait_until(base + f"/api/scan/jobs/{job_id}", "job")
     print("job done", job_id)
@@ -171,12 +201,15 @@ def main() -> int:
         timeout=30,
     )
     if status != 202:
-        fail(f"batch enqueue returned {status}: {raw[:300]!r}")
+        reason = header(_headers, "X-Sphinx-Queue-Error")
+        fail(f"batch enqueue returned {status} (queue error: {reason or 'n/a'}): {raw[:300]!r}")
     batch_id = json.loads(raw)["batch_id"]
     wait_until(base + f"/api/scan/batch/{batch_id}", "batch")
     print("batch done", batch_id)
 
-    codes = burst(base, 12)
+    # One past the per-minute rate trips the limiter however many earlier
+    # requests have already aged out of the window.
+    codes = burst(base, rate + 1)
     if 429 not in codes:
         fail(f"rate limit did not return 429: {codes}")
     spoofed = burst(base, 1, forwarded="203.0.113.50")
