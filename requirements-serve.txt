@@ -14,7 +14,10 @@
 # install there and on ubuntu-latest. Do not run `vercel build` on macOS:
 # the CLI would vendor host wheels the function cannot load.
 # Unzipped manylinux_2_28 wheels, including dependencies: about 320 MiB.
-# The standard Python function limit is 500 MiB uncompressed.
+# With the custom install command, the builder's default cap is 225 MB.
+# The deploy sets VERCEL_SUPPORT_LARGE_FUNCTIONS=1 (limit 5 GB). The
+# post-build check still fails the bundle above 500 MiB so the NCCL wheel
+# cannot slip back in.
 numpy==1.26.4
 pandas==2.2.2
 scikit-learn==1.9.1

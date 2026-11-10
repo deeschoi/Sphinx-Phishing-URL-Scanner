@@ -1,10 +1,13 @@
 #!/bin/sh
 # Build a production Vercel output.
 #
-# Dependencies come from uv.lock (the requirements-serve.txt set). The wheels
-# are about 330 MB unzipped. vercel.json sets VERCEL_SUPPORT_LARGE_FUNCTIONS
-# so a bundle over the 225 MB pack limit can still ship. Do not set an
-# installCommand.
+# Dependencies are installed by vercel.json's installCommand
+# (`pip install -r requirements-serve.txt`). That set is about 330 MB
+# unzipped. A custom install command disables Vercel's automatic packing
+# and the builder then refuses anything over 225 MB unless
+# VERCEL_SUPPORT_LARGE_FUNCTIONS=1. Large functions allow up to 5 GB.
+# Keep the install command: pyproject.toml still depends on
+# requirements.txt, and that file pulls in the NCCL wheel.
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root"
@@ -25,5 +28,9 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+
+# Must be set in this process. `vercel build` reads it from the environment;
+# a Vercel project variable is not required for the size check.
+export VERCEL_SUPPORT_LARGE_FUNCTIONS=1
 vercel build --prod --token "$VERCEL_TOKEN"
 python scripts/check_function_bundle.py
