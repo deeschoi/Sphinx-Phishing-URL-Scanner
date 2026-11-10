@@ -779,6 +779,10 @@ def claim_scan_job(job_id: str) -> ScanJob | None:
 # A function is killed at ``maxDuration`` (60s). Five minutes leaves room for
 # that kill and for QStash's last retry before a row is declared dead.
 STALE_RUNNING_JOB_SECONDS = 300
+# A queued row this old was never delivered: QStash gave up (bad signing key,
+# unreachable worker) or the process holding it died. Left alone it counts
+# against the queue cap until the daily purge.
+STALE_QUEUED_JOB_SECONDS = 900
 
 
 def running_job_is_stale(
@@ -797,14 +801,19 @@ def running_job_is_stale(
     return started < current - timedelta(seconds=max_age_seconds)
 
 
-def fail_stale_running_jobs(max_age_seconds: int = STALE_RUNNING_JOB_SECONDS) -> int:
-    """Mark running jobs whose worker disappeared as timed out.
+def fail_stale_running_jobs(
+    max_age_seconds: int = STALE_RUNNING_JOB_SECONDS,
+    max_queued_seconds: int = STALE_QUEUED_JOB_SECONDS,
+) -> int:
+    """Mark running jobs whose worker disappeared, and undelivered queued jobs, as errors.
 
     A killed function cannot write the error itself. The daily cron is the
     idle backstop. Queueing a scan, and reading a job that is already stale,
     run the same update so the UI and the queue cap do not wait for that cron.
     """
-    cutoff = datetime.now(UTC) - timedelta(seconds=max_age_seconds)
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(seconds=max_age_seconds)
+    queued_cutoff = now - timedelta(seconds=max_queued_seconds)
     with session_scope() as session:
         ids = session.scalars(
             update(ScanJob)
@@ -816,4 +825,10 @@ def fail_stale_running_jobs(max_age_seconds: int = STALE_RUNNING_JOB_SECONDS) ->
             .values(status="error", error="Scan timed out.")
             .returning(ScanJob.id)
         ).all()
-        return len(ids)
+        queued = session.scalars(
+            update(ScanJob)
+            .where(ScanJob.status == "queued", ScanJob.created_at < queued_cutoff)
+            .values(status="error", error="Scan was never started.")
+            .returning(ScanJob.id)
+        ).all()
+        return len(ids) + len(queued)

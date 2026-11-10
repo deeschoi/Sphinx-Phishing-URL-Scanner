@@ -225,6 +225,67 @@ def test_qstash_publish_failure_marks_unpublished_rows(jobs_env, monkeypatch):
     assert list(rows.values()).count("error") == 2
 
 
+def test_qstash_publish_failure_reason_names_the_status_not_the_body(jobs_env, monkeypatch):
+    _, jobs = jobs_env
+    from qstash.errors import QStashError
+
+    monkeypatch.setenv("SPHINX_JOB_BACKEND", "qstash")
+
+    def publish(job_id: str) -> None:
+        raise QStashError('Request failed with status: 401, body: {"error":"secret-ish"}')
+
+    monkeypatch.setattr(jobs, "_publish_job", publish)
+    with pytest.raises(jobs.JobPublishError) as caught:
+        jobs.enqueue_scan_job("https://example.com")
+    assert caught.value.reason == "QStashError/401"
+
+
+def test_qstash_base_url_keeps_only_scheme_and_host(monkeypatch):
+    from phishing import jobs
+
+    monkeypatch.delenv("QSTASH_URL", raising=False)
+    assert jobs.qstash_base_url() is None
+    for raw in (
+        "https://qstash-us-east-1.upstash.io",
+        "https://qstash-us-east-1.upstash.io/",
+        " https://qstash-us-east-1.upstash.io/v2/publish/\n",
+        "https://qstash-us-east-1.upstash.io/v2",
+    ):
+        monkeypatch.setenv("QSTASH_URL", raw)
+        assert jobs.qstash_base_url() == "https://qstash-us-east-1.upstash.io"
+
+
+def test_queue_config_lists_missing_settings_without_values(monkeypatch):
+    from phishing import jobs
+
+    for name in ("QSTASH_TOKEN", "QSTASH_CURRENT_SIGNING_KEY", "QSTASH_URL",
+                 "SPHINX_WORKER_URL", "SPHINX_PUBLIC_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("QSTASH_NEXT_SIGNING_KEY", "sig_next_value")
+    monkeypatch.setenv("VERCEL_URL", "sphinx-abc123-team.vercel.app")
+    config = jobs.queue_config()
+    assert config["missing"] == ["QSTASH_TOKEN", "QSTASH_CURRENT_SIGNING_KEY"]
+    assert config["worker_host"] == "sphinx-abc123-team.vercel.app"
+    assert config["qstash_host"] == "default"
+    assert "sig_next_value" not in repr(config)
+
+
+def test_reaper_errors_a_queued_job_that_was_never_delivered(jobs_env):
+    from datetime import UTC, datetime, timedelta
+
+    db, _jobs = jobs_env
+    old = db.create_scan_job("https://example.com/old")
+    new = db.create_scan_job("https://example.com/new")
+    with db.session_scope() as session:
+        row = session.get(db.ScanJob, old)
+        assert row is not None
+        row.created_at = datetime.now(UTC) - timedelta(minutes=30)
+    assert db.fail_stale_running_jobs() == 1
+    assert db.get_scan_job(old).status == "error"
+    assert db.get_scan_job(old).error == "Scan was never started."
+    assert db.get_scan_job(new).status == "queued"
+
+
 def test_qstash_queue_cap_counts_rows(jobs_env, monkeypatch):
     _, jobs = jobs_env
     monkeypatch.setenv("SPHINX_JOB_BACKEND", "qstash")

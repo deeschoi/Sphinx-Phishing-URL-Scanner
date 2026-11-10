@@ -576,3 +576,30 @@ def test_an_oversized_scan_payload_does_not_hang_or_500(client, monkeypatch):
     assert response.status_code in {200, 422}
     if response.status_code == 200:
         assert seen["n_signals"] <= 48
+
+
+def test_readiness_fails_when_qstash_settings_are_missing(client, monkeypatch):
+    monkeypatch.setenv("SPHINX_JOB_BACKEND", "qstash")
+    monkeypatch.setenv("VERCEL_URL", "sphinx-abc123-team.vercel.app")
+    monkeypatch.setenv("QSTASH_CURRENT_SIGNING_KEY", "sig_current_value")
+    monkeypatch.setenv("QSTASH_NEXT_SIGNING_KEY", "sig_next_value")
+    for name in ("QSTASH_TOKEN", "SPHINX_WORKER_URL", "SPHINX_PUBLIC_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    response = client.get("/api/ready")
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["jobs_config"] == "missing QSTASH_TOKEN"
+    assert detail["worker_host"] == "sphinx-abc123-team.vercel.app"
+    assert "sig_" not in response.text
+
+
+def test_queue_publish_failure_names_the_reason_in_a_header(client, monkeypatch):
+    from phishing.jobs import JobPublishError
+
+    def refuse(*_args, **_kwargs):
+        raise JobPublishError("Could not queue scan.", reason="QStashError/401")
+
+    monkeypatch.setattr("api.main.enqueue_scan_job", refuse)
+    response = client.post("/api/scan/jobs", json={"url": "https://example.com"})
+    assert response.status_code == 503
+    assert response.headers["X-Sphinx-Queue-Error"] == "QStashError/401"
