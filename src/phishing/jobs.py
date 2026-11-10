@@ -9,6 +9,7 @@ parallelism cap. Status transitions always land on ``done`` or ``error``.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 import uuid
@@ -48,7 +49,15 @@ class JobQueueFull(Exception):
 
 
 class JobPublishError(Exception):
-    """The durable queue did not accept every job in the request."""
+    """The durable queue did not accept every job in the request.
+
+    ``reason`` is a short, non-secret label such as ``QStashError/401``, so a
+    caller can tell a bad token from a missing setting without the logs.
+    """
+
+    def __init__(self, message: str, reason: str = "") -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class InvalidWorkerSignature(Exception):
@@ -308,20 +317,73 @@ def worker_url() -> str:
     return base + "/api/internal/scan-jobs/run"
 
 
+def qstash_base_url() -> str | None:
+    """The regional QStash endpoint, or None for the SDK default.
+
+    QStash tokens are regional. The SDK reads ``QSTASH_URL`` raw, so a pasted
+    trailing newline or a ``/v2/publish`` suffix from the console turned every
+    publish into a 404. Keep only the scheme and host.
+    """
+    raw = env("QSTASH_URL", "").strip().rstrip("/")
+    for suffix in ("/v2/publish", "/v2"):
+        raw = raw.removesuffix(suffix)
+    return raw or None
+
+
 def _qstash_client():
     from qstash import QStash
 
     token = env("QSTASH_TOKEN", "").strip()
     if not token:
         raise RuntimeError("QSTASH_TOKEN is required when SPHINX_JOB_BACKEND=qstash")
-    return QStash(token)
+    return QStash(token, base_url=qstash_base_url())
+
+
+_QSTASH_SETTINGS = ("QSTASH_TOKEN", "QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY")
+
+
+def queue_config() -> dict[str, Any]:
+    """Non-secret view of the QStash settings, for ``/api/ready``.
+
+    No network call. It reports which settings are missing, never their values.
+    """
+    missing = [name for name in _QSTASH_SETTINGS if not env(name, "").strip()]
+    try:
+        worker_host = worker_url().split("/")[2]
+    except RuntimeError:
+        worker_host = None
+        missing.append("VERCEL_URL")
+    base = qstash_base_url()
+    return {
+        "missing": missing,
+        "worker_host": worker_host,
+        "qstash_host": base.split("/")[2] if base and "//" in base else "default",
+    }
+
+
+def _publish_failure_reason(exc: BaseException) -> str:
+    """``ClassName`` or ``ClassName/<status>``. Never the token or response body."""
+    name = type(exc).__name__
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status is None:
+        found = re.search(r"status: (\d{3})", str(exc))
+        status = found.group(1) if found else None
+    return f"{name}/{status}" if status else name
 
 
 def _publish_job(job_id: str) -> None:
     client = _qstash_client()
+    headers: dict[str, str] = {}
+    # Vercel exposes this when Protection Bypass for Automation is on. QStash
+    # forwards it to the worker, so a protected deployment still gets its jobs.
+    # A header, not the query param: the signed URL must equal worker_url().
+    bypass = env("VERCEL_AUTOMATION_BYPASS_SECRET", "").strip()
+    if bypass:
+        headers["x-vercel-protection-bypass"] = bypass
     client.message.publish_json(
         url=worker_url(),
         body={"job_id": job_id},
+        headers=headers or None,
         # QStash delivers at most JOB_WORKERS scans at once. Sync scans use
         # the separate Redis in-flight cap, so the outbound ceiling stays
         # SCAN_MAX_CONCURRENT + JOB_WORKERS.
@@ -358,13 +420,21 @@ def _enqueue_durable(
             _publish_job(job_id)
             published += 1
     except Exception as exc:
-        log.exception("could not publish scan job")
+        reason = _publish_failure_reason(exc)
+        config = queue_config()
+        log.exception(
+            "could not publish scan job (%s) via QStash %s to %s; missing settings: %s",
+            reason,
+            config["qstash_host"],
+            config["worker_host"],
+            ", ".join(config["missing"]) or "none",
+        )
         for job_id in job_ids[published:]:
             try:
                 update_scan_job(job_id, status="error", error="Could not queue scan.")
             except Exception:
                 log.exception("could not mark unpublished job %s as error", job_id)
-        raise JobPublishError("Could not queue scan.") from exc
+        raise JobPublishError("Could not queue scan.", reason=reason) from exc
     try:
         purge_old_scan_jobs()
     except Exception:

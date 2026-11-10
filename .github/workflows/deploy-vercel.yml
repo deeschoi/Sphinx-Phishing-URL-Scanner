@@ -116,5 +116,17 @@ jobs:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: python scripts/smoke_vercel.py "${{ steps.deploy.outputs.url }}"
 
+      - name: Show the staged deploy's function errors
+        # The smoke test only sees status codes. The traceback behind a 503
+        # (e.g. "could not publish scan job") is in the runtime log.
+        if: failure() && steps.deploy.outputs.url != ''
+        continue-on-error: true
+        run: |
+          vercel logs --deployment "${{ steps.deploy.outputs.url }}" \
+            --since 30m --limit 200 --query "level:error OR level:warning" \
+            --token "$VERCEL_TOKEN" || \
+          vercel logs --deployment "${{ steps.deploy.outputs.url }}" \
+            --since 30m --limit 200 --token "$VERCEL_TOKEN"
+
       - name: Promote
         run: vercel promote "${{ steps.deploy.outputs.url }}" --yes --token "$VERCEL_TOKEN"

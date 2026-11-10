@@ -16,6 +16,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from starlette.concurrency import run_in_threadpool
 
 from api.security import (
     chat_limiter,
@@ -43,6 +44,7 @@ from phishing.jobs import (
     enqueue_batch,
     enqueue_scan_job,
     job_status,
+    queue_config,
     run_queued_job,
     shutdown_jobs,
     verify_worker_signature,
@@ -52,6 +54,7 @@ from phishing.scanner import available_models, research_findings, scan
 from phishing.settings import (
     BATCH_MAX_URLS,
     GROQ_MODEL,
+    SCAN_RATE_PER_MINUTE,
     env,
     env_bool,
     groq_api_key,
@@ -139,11 +142,16 @@ def _queue_full() -> HTTPException:
     )
 
 
-def _publish_failed() -> HTTPException:
+def _publish_failed(exc: JobPublishError) -> HTTPException:
+    headers = {"Retry-After": "5"}
+    if exc.reason:
+        # Class and HTTP status only, e.g. ``QStashError/401``. Enough to tell
+        # a bad token from a missing setting without opening the logs.
+        headers["X-Sphinx-Queue-Error"] = exc.reason
     return HTTPException(
         status_code=503,
         detail="Could not queue scan. Try again in a moment.",
-        headers={"Retry-After": "5"},
+        headers=headers,
     )
 
 
@@ -561,8 +569,8 @@ def create_scan_job(request: ScanRequest, http_request: Request) -> JSONResponse
         job_id = enqueue_scan_job(request.url, timeout=request.timeout, client_key=key)
     except JobQueueFull:
         raise _queue_full() from None
-    except JobPublishError:
-        raise _publish_failed() from None
+    except JobPublishError as exc:
+        raise _publish_failed(exc) from None
     return JSONResponse({"job_id": job_id}, status_code=202)
 
 
@@ -585,8 +593,8 @@ def create_scan_batch(request: BatchRequest, http_request: Request) -> JSONRespo
         batch_id, job_ids = enqueue_batch(urls, timeout=request.timeout, client_key=key)
     except JobQueueFull:
         raise _queue_full() from None
-    except JobPublishError:
-        raise _publish_failed() from None
+    except JobPublishError as exc:
+        raise _publish_failed(exc) from None
     return JSONResponse({"batch_id": batch_id, "job_ids": job_ids}, status_code=202)
 
 
@@ -611,7 +619,9 @@ async def run_published_scan_job(request: Request) -> dict:
     job_id = payload.get("job_id") if isinstance(payload, dict) else None
     if not isinstance(job_id, str) or _public_scan_id(job_id) is None:
         raise HTTPException(status_code=400, detail="Invalid job id.")
-    return {"job_id": job_id, "status": run_queued_job(job_id)}
+    # The scan fetches the target and writes to Neon. Off the event loop, so
+    # one job does not stall every other request on this instance.
+    return {"job_id": job_id, "status": await run_in_threadpool(run_queued_job, job_id)}
 
 
 def _require_cron(request: Request) -> None:
@@ -816,6 +826,18 @@ def ready() -> dict:
 
     checks["rate_limit"] = rate_limit_backend()
     checks["jobs"] = job_backend()
+    checks["scan_rate_per_minute"] = SCAN_RATE_PER_MINUTE
+    if job_backend() == "qstash":
+        # Settings only, no network call. Without this, a missing token showed
+        # up as a 503 on the first queued scan, after ready said all was well.
+        config = queue_config()
+        checks["worker_host"] = config["worker_host"]
+        checks["qstash_host"] = config["qstash_host"]
+        if config["missing"]:
+            ok = False
+            checks["jobs_config"] = "missing " + ", ".join(config["missing"])
+        else:
+            checks["jobs_config"] = "ok"
     if serverless():
         # The CDN serves web/dist. A missing index.html in the bundle is not
         # a failed instance.
