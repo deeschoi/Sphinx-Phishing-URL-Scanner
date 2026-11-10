@@ -9,8 +9,9 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root"
 
-# CLI 48.12.1 does not read VERCEL_TOKEN from the environment. The deploy
-# steps already pass --token; this script has to do the same.
+# Pass --token explicitly so a missing GitHub secret fails here. CLI 48.12.1
+# also rejected `functions.app.py` (it only matches files in `api/`); the
+# workflow installs 65.14.0, which accepts the FastAPI entrypoint.
 if [ -z "${VERCEL_TOKEN:-}" ]; then
   echo "VERCEL_TOKEN is empty. Add it under GitHub Settings → Environments → production → Environment secrets." >&2
   exit 1
