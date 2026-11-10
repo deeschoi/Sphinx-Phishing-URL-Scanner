@@ -42,7 +42,7 @@ Git deploys are off. [`.github/workflows/deploy-vercel.yml`](.github/workflows/d
 
 Preview and Production use different Neon branches, so a preview never writes production telemetry. Preview deployments have Deployment Protection turned on (`scripts/ensure_preview_protection.sh`) so they are not an anonymous open proxy. Production deployment URLs stay reachable: QStash and the smoke test call the staged URL before promote.
 
-`vercel.json` runs maintenance once a day at 08:00 UTC, which is what a Vercel Hobby plan allows. A Pro plan can use a tighter schedule. The maintenance route is still there to call by hand.
+`vercel.json` schedules maintenance every 10 minutes. That schedule needs a Vercel plan that allows it. A Hobby account often accepts a cron only once a day; if the deploy rejects the schedule, the maintenance route is still there to call by hand.
 
 Dashboard env for Production (never commit secrets, and never set `GROQ_API_KEY` or `SPHINX_API_KEY`):
 
@@ -67,7 +67,7 @@ Dashboard env for Production (never commit secrets, and never set `GROQ_API_KEY`
 | `SPHINX_LEASE_TTL_SECONDS` | `60` (same as the function `maxDuration`) |
 | `OMP_NUM_THREADS` | `1` (`app.py` sets this when it is unset) |
 
-The function is installed from [`requirements-serve.txt`](requirements-serve.txt) and [`uv.lock`](uv.lock) (`xgboost-cpu`, no shap). Those wheels are about 330 MB unzipped, past the 225 MB standard pack limit, so the project opts into large functions. Docker and Render keep using [`requirements.txt`](requirements.txt).
+The function is trained and installed from [`requirements-serve.txt`](requirements-serve.txt) (`xgboost-cpu`, no shap). Docker and Render keep using [`requirements.txt`](requirements.txt).
 
 ## Public demo (Render)
 
@@ -104,8 +104,7 @@ Python 3.11+ (3.12 matches the Docker image).
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-pip install -e ".[dev]" --no-deps
-pip install "pytest==9.1.1" "httpx==0.28.1" "fakeredis[lua]==2.40.0"
+pip install -e ".[dev]"
 
 # train the served model if artifacts/model.joblib is missing
 phishing train
