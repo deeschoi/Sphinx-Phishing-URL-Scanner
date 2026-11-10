@@ -9,6 +9,13 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root"
 
-vercel pull --yes --environment=production
-vercel build --prod
+# CLI 48.12.1 does not read VERCEL_TOKEN from the environment. The deploy
+# steps already pass --token; this script has to do the same.
+if [ -z "${VERCEL_TOKEN:-}" ]; then
+  echo "VERCEL_TOKEN is empty. Add it under GitHub Settings → Environments → production → Environment secrets." >&2
+  exit 1
+fi
+
+vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+vercel build --prod --token "$VERCEL_TOKEN"
 python scripts/check_function_bundle.py
