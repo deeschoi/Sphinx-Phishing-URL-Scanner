@@ -1,6 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "pip install -r requirements-serve.txt",
   "buildCommand": "npm ci --prefix web && npm run build --prefix web && rm -rf public && mkdir -p public && cp -a web/dist/. public/",
   "git": {
     "deploymentEnabled": false

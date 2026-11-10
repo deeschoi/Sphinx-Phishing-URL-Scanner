@@ -67,7 +67,7 @@ Dashboard env for Production (never commit secrets, and never set `GROQ_API_KEY`
 | `SPHINX_LEASE_TTL_SECONDS` | `60` (same as the function `maxDuration`) |
 | `OMP_NUM_THREADS` | `1` (`app.py` sets this when it is unset) |
 
-The function is trained and installed from [`requirements-serve.txt`](requirements-serve.txt) (`xgboost-cpu`, no shap). Docker and Render keep using [`requirements.txt`](requirements.txt).
+The function is trained from [`requirements-serve.txt`](requirements-serve.txt) (`xgboost-cpu`, no shap) and installed from [`uv.lock`](uv.lock), which locks that set plus this package. Run `uv lock` after editing `requirements-serve.txt`, and leave the Vercel Install Command unset. Docker and Render keep using [`requirements.txt`](requirements.txt).
 
 ## Public demo (Render)
 
