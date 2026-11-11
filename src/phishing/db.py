@@ -306,7 +306,7 @@ def _ensure_scan_job_started_at(engine) -> None:
 
     ``create_all`` does not alter tables that already exist. Postgres gets
     the column from migration 0005, which CI runs before a serverless deploy.
-    Local, Docker, and Render still boot through ``init_db``.
+    Local and Docker still boot through ``init_db``.
     """
     if engine.dialect.name != "sqlite":
         return

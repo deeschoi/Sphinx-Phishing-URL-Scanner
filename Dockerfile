@@ -94,7 +94,7 @@ RUN mkdir -p /app/data \
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
 
-# Local/compose default. Render injects PORT at runtime (often 10000).
+# Local/compose default. A container host may inject its own PORT at runtime.
 ENV PORT=8000
 EXPOSE 8000
 
