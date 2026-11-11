@@ -30,8 +30,13 @@ def test_cdn_policy_matches_the_api_and_deploys_only_from_ci():
     assert "web/dist/**" not in config["functions"]["app.py"]["excludeFiles"]
     assert config["crons"][0]["path"] == "/api/internal/maintenance"
     assert config["crons"][0]["schedule"] == "0 8 * * *"
-    sources = [rule["source"] for rule in config["rewrites"]]
-    assert any("api" in source for source in sources)
+    # No SPA rewrite. CLI 65 hands a backend project's rewrite to the app as
+    # the destination path, so "/assets/index-*.js" reached FastAPI as
+    # "/index.html", the browser got HTML for its module script, and the UI
+    # rendered blank. Unmatched paths already reach the app, whose catch-all
+    # serves web/dist files and falls back to index.html.
+    for rule in config.get("rewrites", []):
+        assert "index.html" not in rule.get("destination", ""), rule
 
 
 def test_vercel_entrypoint_is_the_root_app():
