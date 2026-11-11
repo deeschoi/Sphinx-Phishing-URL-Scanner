@@ -1,4 +1,5 @@
-# Public demo: Free Docker web service, ephemeral SQLite, Groq BYOK.
+# Optional Docker host. The public site is the Vercel project, not this service.
+# Free instance, ephemeral SQLite, Groq bring-your-own-key.
 # Do not put GROQ_API_KEY or SPHINX_API_KEY here — chat bills the visitor
 # who pastes a key, and a baked Sphinx key is not real auth.
 services:

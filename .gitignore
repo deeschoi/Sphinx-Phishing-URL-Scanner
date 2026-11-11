@@ -15,6 +15,7 @@ data/
 reports/figures/
 .coverage
 htmlcov/
+node_modules/
 web/node_modules/
 web/dist/
 public/
