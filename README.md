@@ -122,7 +122,7 @@ CI also typechecks and builds the UI, lints with Ruff, imports every entry point
 
 ## Repo map
 
-Docker, Render, Alembic, and Python packaging all look at the repo root, which is why those files sit next to the README. Coursework, notebooks, and the 2012 table live under `research/`. Local editor and scan artifacts (`.claude/`, `CLAUDE-SECURITY-*`) are gitignored.
+Docker, Vercel, Alembic, and Python packaging all look at the repo root, which is why those files sit next to the README. Coursework, notebooks, and the 2012 table live under `research/`. Local editor and scan artifacts (`.claude/`, `CLAUDE-SECURITY-*`) are gitignored.
 
 ```text
 src/phishing/                         library: scan, train, extract, analyst
@@ -137,7 +137,6 @@ research/                             2012 coursework — not used at scan time
 artifacts/model.joblib                fitted model (gitignored; run train)
 reports/                              CSV / JSON / figures, including the model card
 Dockerfile                            trains at build, serves uvicorn on $PORT
-render.yaml                           optional Docker host, not the public site
 requirements-serve.txt                Vercel function deps (xgboost-cpu, no shap)
 app.py                                Vercel entrypoint; re-exports api.main:app
 vercel.json                           CDN, headers, cron, function limits
