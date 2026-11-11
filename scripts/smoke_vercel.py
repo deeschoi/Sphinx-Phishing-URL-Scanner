@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -73,6 +74,35 @@ def require_csp(base: str, path: str) -> None:
     policy = header(headers, "Content-Security-Policy")
     if "default-src" not in policy:
         fail(f"{path} is missing the Content-Security-Policy header")
+
+
+def require_frontend(base: str) -> None:
+    """The page's own bundles must come back as JS/CSS, not index.html.
+
+    A rewrite that answers every path with index.html still passes a status
+    check, but the browser refuses an HTML module script and shows a blank
+    page.
+    """
+    status, _headers, raw = request("GET", base + "/", timeout=30)
+    if status != 200:
+        fail(f"/ returned {status}")
+    html = raw.decode("utf-8", "replace")
+    assets = re.findall(r'(?:src|href)="(/assets/[^"]+\.(?:js|css))"', html)
+    if not any(path.endswith(".js") for path in assets):
+        fail(f"/ does not reference a /assets/*.js bundle: {html[:300]!r}")
+    for path in assets:
+        status, headers, _body = request("GET", base + path, timeout=30)
+        kind = header(headers, "Content-Type")
+        want = "javascript" if path.endswith(".js") else "text/css"
+        if status != 200 or want not in kind:
+            fail(f"{path} returned {status} {kind!r}, expected {want}")
+    status, headers, _body = request("GET", base + "/history", timeout=30)
+    if status != 200 or "text/html" not in header(headers, "Content-Type"):
+        fail(f"/history (client route) returned {status}")
+    # 404 with docs off, JSON with SPHINX_ENABLE_DOCS=1; never the SPA page.
+    status, headers, _body = request("GET", base + "/openapi.json", timeout=30)
+    if "text/html" in header(headers, "Content-Type"):
+        fail(f"/openapi.json returned index.html ({status}): a rewrite is masking the app")
 
 
 def wait_until(url: str, label: str) -> dict:
@@ -149,6 +179,9 @@ def main() -> int:
     require_csp(base, "/")
     require_csp(base, "/api/health")
     print("csp ok")
+
+    require_frontend(base)
+    print("frontend assets ok")
 
     status, _headers, raw = request(
         "POST",
