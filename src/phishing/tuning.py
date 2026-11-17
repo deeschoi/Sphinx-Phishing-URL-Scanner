@@ -1,4 +1,17 @@
-"""Hyperparameter search under grouped cross-validation, plus model persistence."""
+"""Load and save the served model artifact.
+
+The served model is stored in XGBoost's native format, not a pickle:
+
+* ``artifacts/model_meta.json``: the :class:`ModelArtifact` fields plus the
+  file name of each booster;
+* ``artifacts/page.ubj`` and ``artifacts/url.ubj``: the 48-feature page model
+  and the URL-only fallback, written by ``Booster.save_model``.
+
+Loading needs only xgboost and numpy. Unpickling the old ``model.joblib``
+needed scikit-learn (``XGBClassifier`` is an sklearn estimator), and that
+dragged scikit-learn and pandas into the serverless bundle. The native files
+also do not have to be written by the exact xgboost build that reads them.
+"""
 
 from __future__ import annotations
 
@@ -6,89 +19,73 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import joblib
-import numpy as np
-import pandas as pd
-from sklearn.model_selection import RandomizedSearchCV, StratifiedGroupKFold
-
-from phishing.config import ARTIFACTS_DIR, N_SPLITS, RANDOM_STATE
-from phishing.evaluate import best_f1_threshold, calibrate, metric_dict
-from phishing.models import build_model
+from phishing.config import ARTIFACTS_DIR
+from phishing.io import load_json, save_json
 from phishing.schema import ModelArtifact
 
-SEARCH_SPACES: dict[str, dict[str, list]] = {
-    "Logistic Regression": {
-        "C": [0.01, 0.1, 1.0, 10.0, 100.0, 1e10],
-        "penalty": ["l2"],
-        "solver": ["liblinear"],
-    },
-    "Random Forest": {
-        "n_estimators": [200, 300, 500],
-        "max_depth": [None, 12, 20],
-        "min_samples_leaf": [1, 2, 4],
-        "max_features": ["sqrt", 0.5],
-    },
-    "Gradient Boosting": {
-        "n_estimators": [100, 150, 250],
-        "learning_rate": [0.05, 0.1, 0.2],
-        "max_depth": [2, 3, 4],
-        "subsample": [0.8, 1.0],
-    },
-    "XGBoost": {
-        "n_estimators": [200, 300, 500],
-        "learning_rate": [0.03, 0.08, 0.15],
-        "max_depth": [3, 5, 7],
-        "subsample": [0.7, 0.9],
-        "colsample_bytree": [0.7, 0.9],
-        "min_child_weight": [1, 3],
-    },
-    "LightGBM": {
-        "n_estimators": [200, 300, 500],
-        "learning_rate": [0.03, 0.08, 0.15],
-        "num_leaves": [15, 31, 63],
-        "min_child_samples": [10, 20, 40],
-        "subsample": [0.7, 0.9],
-        "colsample_bytree": [0.7, 0.9],
-    },
-}
+META_NAME = "model_meta.json"
+FORMAT_VERSION = 1
+# Payload key -> booster file. "estimator" is the page model.
+BOOSTER_FILES = {"estimator": "page.ubj", "url_estimator": "url.ubj"}
 
 
-def grouped_random_search(
-    name: str,
-    X: pd.DataFrame,
-    y: pd.Series,
-    groups: np.ndarray,
-    n_iter: int = 12,
-    n_splits: int = N_SPLITS,
-    scoring: str = "roc_auc",
-    random_state: int = RANDOM_STATE,
-) -> RandomizedSearchCV:
-    """Tune ``name`` under StratifiedGroupKFold so search itself is leakage-free."""
-    estimator = build_model(name)
-    cv = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
-    search = RandomizedSearchCV(
-        estimator,
-        SEARCH_SPACES[name],
-        n_iter=n_iter,
-        scoring=scoring,
-        cv=cv,
-        random_state=random_state,
-        n_jobs=-1,
-        refit=True,
-    )
-    search.fit(X, y, groups=groups)
-    return search
+class BoosterScorer:
+    """The slice of ``XGBClassifier`` the scanner and explainer use.
+
+    ``predict_proba`` takes a DataFrame (columns are matched by name) or a 2-D
+    array already in ``feature_names`` order, and returns ``[1 - p, p]`` rows
+    like the sklearn wrapper. ``get_booster`` is what ``phishing.explain``
+    uses for TreeSHAP.
+    """
+
+    def __init__(self, booster: Any, feature_names: list[str]) -> None:
+        self._booster = booster
+        self.feature_names = list(feature_names)
+        best = booster.attr("best_iteration")
+        # Mirror XGBClassifier: an early-stopped model predicts with the best
+        # round, not every tree it grew.
+        self._iteration_range = (0, int(best) + 1) if best is not None else (0, 0)
+
+    def get_booster(self) -> Any:
+        return self._booster
+
+    def _matrix(self, X: Any) -> Any:
+        import numpy as np
+
+        if hasattr(X, "columns"):
+            missing = [name for name in self.feature_names if name not in X.columns]
+            if missing:
+                raise ValueError(f"frame is missing model features: {missing}")
+            X = X.loc[:, self.feature_names].to_numpy(dtype=np.float64)
+        array = np.asarray(X, dtype=np.float64)
+        if array.ndim == 1:
+            array = array.reshape(1, -1)
+        if array.shape[1] != len(self.feature_names):
+            raise ValueError(
+                f"expected {len(self.feature_names)} features, got {array.shape[1]}"
+            )
+        return np.ascontiguousarray(array)
+
+    def predict_proba(self, X: Any) -> Any:
+        import numpy as np
+        import xgboost as xgb
+
+        matrix = xgb.DMatrix(self._matrix(X), feature_names=self.feature_names)
+        p = np.asarray(
+            self._booster.predict(matrix, iteration_range=self._iteration_range),
+            dtype=np.float64,
+        ).reshape(-1)
+        return np.column_stack([1.0 - p, p])
 
 
-def tune_all(
-    X: pd.DataFrame,
-    y: pd.Series,
-    groups: np.ndarray,
-    names: list[str] | None = None,
-    n_iter: int = 12,
-) -> dict[str, RandomizedSearchCV]:
-    names = names or list(SEARCH_SPACES)
-    return {name: grouped_random_search(name, X, y, groups, n_iter=n_iter) for name in names}
+def _booster_of(estimator: Any) -> Any:
+    get_booster = getattr(estimator, "get_booster", None)
+    if get_booster is None:
+        raise TypeError(
+            f"{type(estimator).__name__} has no XGBoost booster; the served "
+            "model must be XGBoost to be saved in native format"
+        )
+    return get_booster()
 
 
 def persist_model(
@@ -102,8 +99,12 @@ def persist_model(
     extra_estimators: dict[str, Any] | None = None,
     path: Path | None = None,
 ) -> Path:
-    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-    path = path or (ARTIFACTS_DIR / "model.joblib")
+    """Write the boosters and their metadata. Returns the metadata path.
+
+    ``path`` names the metadata file; the boosters go next to it.
+    """
+    path = Path(path or (ARTIFACTS_DIR / META_NAME))
+    path.parent.mkdir(parents=True, exist_ok=True)
     artifact = ModelArtifact(
         model_name=model_name,
         feature_names=list(feature_names),
@@ -113,16 +114,56 @@ def persist_model(
         notes=notes,
         extra=extra or {},
     )
-    payload: dict[str, Any] = {"estimator": estimator, "artifact": artifact}
-    if extra_estimators:
-        payload.update(extra_estimators)
-    joblib.dump(payload, path)
+    estimators = {"estimator": estimator, **(extra_estimators or {})}
+    unknown = set(estimators) - set(BOOSTER_FILES)
+    if unknown:
+        raise ValueError(f"no booster file name for {sorted(unknown)}")
+    files: dict[str, str] = {}
+    for key, est in estimators.items():
+        filename = BOOSTER_FILES[key]
+        _booster_of(est).save_model(str(path.parent / filename))
+        files[key] = filename
+    import xgboost as xgb
+
+    save_json(
+        {
+            "format": FORMAT_VERSION,
+            "xgboost": xgb.__version__,
+            "estimators": files,
+            "artifact": artifact.to_dict(),
+        },
+        path,
+    )
     return path
 
 
+def load_artifact(path: Path | None = None) -> tuple[ModelArtifact, dict[str, str]]:
+    """Metadata only: no xgboost import, a few KB of JSON."""
+    path = Path(path or (ARTIFACTS_DIR / META_NAME))
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"No trained model at {path}. From the repo root run: phishing train"
+        )
+    meta = load_json(path)
+    if meta.get("format") != FORMAT_VERSION:
+        raise ValueError(f"{path} has format {meta.get('format')!r}, expected {FORMAT_VERSION}")
+    return ModelArtifact(**meta["artifact"]), dict(meta["estimators"])
+
+
 def load_payload(path: Path | None = None) -> dict[str, Any]:
-    path = path or (ARTIFACTS_DIR / "model.joblib")
-    return joblib.load(path)
+    """``{"estimator", "artifact", "url_estimator"}``, as the scanner expects."""
+    import xgboost as xgb
+
+    path = Path(path or (ARTIFACTS_DIR / META_NAME))
+    artifact, files = load_artifact(path)
+    url_features = list(artifact.extra.get("url_features") or [])
+    payload: dict[str, Any] = {"artifact": artifact}
+    for key, filename in files.items():
+        booster = xgb.Booster()
+        booster.load_model(str(path.parent / filename))
+        names = artifact.feature_names if key == "estimator" else url_features
+        payload[key] = BoosterScorer(booster, names or list(booster.feature_names or []))
+    return payload
 
 
 def load_model(path: Path | None = None) -> tuple[Any, ModelArtifact]:
@@ -130,33 +171,28 @@ def load_model(path: Path | None = None) -> tuple[Any, ModelArtifact]:
     return payload["estimator"], payload["artifact"]
 
 
-def fit_deployable(
-    name: str,
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    X_val: pd.DataFrame,
-    y_val: pd.Series,
-    groups_train: np.ndarray | None = None,
-    tune: bool = True,
-    calibrate_probs: bool = True,
-) -> tuple[Any, float, dict[str, float]]:
-    """Fit, optionally tune + calibrate, and pick a max-F1 threshold on ``X_val``."""
-    if tune and groups_train is not None:
-        search = grouped_random_search(name, X_train, y_train, groups_train)
-        estimator = search.best_estimator_
-        extra_note = f"best_params={search.best_params_}"
-    else:
-        estimator = build_model(name)
-        estimator.fit(X_train, y_train)
-        extra_note = "default hyperparameters"
+def check_native_parity(
+    payload: dict[str, Any],
+    references: dict[str, tuple[Any, Any]],
+    tolerance: float = 1e-6,
+) -> dict[str, float]:
+    """Max |p_native - p_sklearn| per estimator; raise above ``tolerance``.
 
-    if calibrate_probs:
-        estimator = calibrate(estimator, X_train, y_train, method="isotonic")
+    ``references`` maps a payload key to ``(fitted XGBClassifier, rows)``.
+    Training calls this so a format change can never ship a model that
+    scores differently from the one that was evaluated.
+    """
+    import numpy as np
 
-    proba = estimator.predict_proba(X_val)[:, 1]
-    threshold, _ = best_f1_threshold(y_val, proba)
-    pred = (proba >= threshold).astype(int)
-    metrics = metric_dict(y_val, pred, proba)
-    metrics["threshold"] = threshold
-    metrics["note"] = extra_note  # type: ignore[assignment]
-    return estimator, threshold, metrics
+    gaps: dict[str, float] = {}
+    for key, (reference, rows) in references.items():
+        expected = np.asarray(reference.predict_proba(rows))[:, 1]
+        actual = np.asarray(payload[key].predict_proba(rows))[:, 1]
+        gap = float(np.max(np.abs(expected - actual))) if len(expected) else 0.0
+        gaps[key] = gap
+        if gap > tolerance:
+            raise AssertionError(
+                f"native {key} differs from the trained model by {gap:.2e} "
+                f"(tolerance {tolerance:.0e})"
+            )
+    return gaps

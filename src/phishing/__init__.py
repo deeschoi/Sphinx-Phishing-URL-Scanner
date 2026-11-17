@@ -1,4 +1,4 @@
-"""Phishing website classification pipeline built on the UCI 2012 dataset."""
+"""Sphinx phishing scanner, plus the 2012 UCI research pipeline."""
 
 from phishing.config import FEATURE_COLUMNS, RANDOM_STATE
 

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 
 def to_jsonable(value: Any) -> Any:
@@ -20,14 +19,18 @@ def to_jsonable(value: Any) -> Any:
         return {str(k): to_jsonable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [to_jsonable(v) for v in value]
-    if isinstance(value, np.ndarray):
-        return [to_jsonable(v) for v in value.tolist()]
-    if isinstance(value, np.integer):
-        return int(value)
-    if isinstance(value, np.floating):
-        value = float(value)
-    if isinstance(value, np.bool_):
-        return bool(value)
+    # Only look for numpy types when numpy is already loaded: if it is not,
+    # no value can be one, and the agent/findings paths stay numpy-free.
+    np = sys.modules.get("numpy")
+    if np is not None:
+        if isinstance(value, np.ndarray):
+            return [to_jsonable(v) for v in value.tolist()]
+        if isinstance(value, np.integer):
+            return int(value)
+        if isinstance(value, np.floating):
+            value = float(value)
+        if isinstance(value, np.bool_):
+            return bool(value)
     if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
         return None
     if isinstance(value, Path):

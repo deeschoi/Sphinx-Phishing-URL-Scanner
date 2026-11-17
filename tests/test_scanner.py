@@ -58,8 +58,9 @@ def test_research_findings_has_ui_keys():
 def test_api_module_imports():
     from api.main import app
 
+    # "/" is app.frontend(), not a path operation; tests/test_frontend.py covers it.
     routes = {getattr(route, "path", None) for route in app.routes}
-    assert "/" in routes
+    assert "/api/warm" in routes
     assert "/api/scan" in routes
     assert "/api/scan/jobs" in routes
     assert "/api/scan/batch" in routes
@@ -106,7 +107,7 @@ def _patch_scan(
 
     features = pd.Series({c: 1.0 for c in PHIUSIIL_MODEL_FEATURES}, dtype="float64")
     monkeypatch.setattr(
-        scanner, "url_to_phiusiil_features", lambda *a, **k: (features, [], probe)
+        scanner, "phiusiil_feature_values", lambda *a, **k: (features, [], probe)
     )
     full_est, artifact = _fake_model(probability)
     artifact.extra["url_features"] = list(PHIUSIIL_URL_FEATURES)

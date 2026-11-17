@@ -8,11 +8,20 @@
       name="description"
       content="Sphinx, a phishing scanner: paste a link for a live scan and an explained verdict."
     />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Body and headline faces, fetched in parallel with the JS bundle. -->
     <link
-      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
-      rel="stylesheet"
+      rel="preload"
+      href="/fonts/ibm-plex-sans-v23-latin-var.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/cinzel-v26-latin-var.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
     />
     <link
       rel="icon"

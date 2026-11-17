@@ -191,7 +191,10 @@ jobs:
           curl -fsS http://127.0.0.1:8000/api/ready
           curl -fsS http://127.0.0.1:8000/api/model | head -c 400
           curl -fsS http://127.0.0.1:8000/ | grep -q "Sphinx"
-          curl -fsS http://127.0.0.1:8000/history | grep -q "Sphinx"
+          # Client routes fall back to index.html for browser navigations
+          # (Accept: text/html) only, so a missing asset can never come back
+          # as HTML. curl's default Accept: */* would get a 404.
+          curl -fsS -H 'Accept: text/html' http://127.0.0.1:8000/history | grep -q "Sphinx"
 
           # The scan path was never smoke-tested in the container. A private
           # target must be refused, and a well-formed request must return a
@@ -249,7 +252,7 @@ jobs:
 
       - name: Train if the artifact is missing
         run: |
-          if [ ! -f artifacts/model.joblib ]; then
+          if [ ! -f artifacts/model_meta.json ]; then
             python -m phishing.cli train
           fi
 

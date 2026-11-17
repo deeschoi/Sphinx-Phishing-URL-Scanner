@@ -100,7 +100,7 @@ def rate_limit_backend() -> str:
 def serverless() -> bool:
     """No durable local disk, and no schema changes on the request path.
 
-    ``VERCEL=1`` is set by the platform. It selects a NullPool and skips
+    ``VERCEL=1`` is set by the platform. It selects a small DB pool and skips
     ``init_db``. It does not open anonymous access. That stays an explicit
     ``SPHINX_ALLOW_ANONYMOUS``.
     """

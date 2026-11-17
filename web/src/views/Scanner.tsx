@@ -1,15 +1,6 @@
 import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import {
-  POLL_START_MS,
-  RATE_LIMIT_RETRIES,
-  createScanJob,
-  fetchScan,
-  fetchScanJob,
-  isRateLimited,
-  nextPollDelay,
-  rateLimitWaitMs,
-} from "../api";
+import { fetchScan, scanUrl, warmScanner } from "../api";
 import { Analyst } from "../components/Analyst";
 import { Gauge } from "../components/Gauge";
 import { StatusMessage } from "../components/EmptyState";
@@ -17,7 +8,7 @@ import { VerdictBadge } from "../components/VerdictBadge";
 import { downloadJson } from "../export";
 import { fixed, formatProbability, pct, yesNo } from "../format";
 import { WITHHELD_VERDICTS, urlPatternClass, urlPatternLabel } from "../verdict";
-import type { ScanJob, ScanResult, Signal } from "../types";
+import type { ScanResult, Signal } from "../types";
 
 const EXAMPLES = [
   { url: "https://www.wikipedia.org", label: "wikipedia.org" },
@@ -51,48 +42,15 @@ export function Scanner() {
     const id = ++requestId.current;
     setBusy(true);
     setError(false);
-    setStatus("Queued…");
+    setStatus("Fetching the page and scoring it…");
     try {
-      const { job_id } = await createScanJob(trimmed);
+      // One request, answered when the scan is done. The queued job route
+      // cost a QStash hop, a second (often cold) function and a poll loop;
+      // batches still use it.
+      const payload = await scanUrl(trimmed);
       if (id !== requestId.current) return;
-      let polls = 0;
-      let delay = POLL_START_MS;
-      let rateLimited = 0;
-      while (id === requestId.current) {
-        let job: ScanJob;
-        try {
-          job = await fetchScanJob(job_id);
-        } catch (err) {
-          // A 429 means this client spent its read budget, not that the scan
-          // failed — the job is still running server-side, so wait for the
-          // window to drain rather than reporting a scan that never broke.
-          if (!isRateLimited(err) || ++rateLimited > RATE_LIMIT_RETRIES) throw err;
-          setStatus("Rate limit reached — still scanning, waiting to check again…");
-          await new Promise((resolve) => setTimeout(resolve, rateLimitWaitMs(err)));
-          continue;
-        }
-        rateLimited = 0;
-        if (id !== requestId.current) return;
-        if (job.status === "queued") {
-          setStatus("Queued…");
-        } else if (job.status === "running") {
-          setStatus(
-            polls < 2
-              ? "Fetching the page and parsing its HTML…"
-              : "Scoring…",
-          );
-        } else if (job.status === "done") {
-          if (!job.result) throw new Error("Scan finished without a payload.");
-          setResult(job.result);
-          setStatus(null);
-          return;
-        } else if (job.status === "error") {
-          throw new Error(job.error || "Scan failed.");
-        }
-        polls += 1;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        delay = nextPollDelay(delay);
-      }
+      setResult(payload);
+      setStatus(null);
     } catch (err) {
       if (id !== requestId.current) return;
       setError(true);
@@ -123,6 +81,11 @@ export function Scanner() {
       if (id === requestId.current) setBusy(false);
     }
   }
+
+  // Load the model while the visitor is still typing a URL.
+  useEffect(() => {
+    warmScanner();
+  }, []);
 
   // History deep-links here with ?scan=<id> to rehydrate, or ?url= to rescan.
   useEffect(() => {

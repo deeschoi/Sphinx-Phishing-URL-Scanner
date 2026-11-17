@@ -1,4 +1,4 @@
-"""Fit the served PhiUSIIL model and write artifacts/model.joblib."""
+"""Fit the served PhiUSIIL model and write it to artifacts/ in native XGBoost format."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from phishing.data import (
 from phishing.evaluate import best_cost_threshold, metric_dict, threshold_report
 from phishing.io import save_json
 from phishing.models import build_models
-from phishing.tuning import persist_model
+from phishing.tuning import check_native_parity, load_payload, persist_model
 
 MODEL_NAME = "XGBoost"
 OPERATING_POINTS = {"warn": (1.0, 1.0), "block": (10.0, 1.0)}
@@ -186,7 +186,12 @@ def train_phiusiil_model(*, model_name: str = MODEL_NAME) -> dict[str, Any]:
         ),
         extra=extra,
         extra_estimators={"url_estimator": url_served},
-        path=ARTIFACTS_DIR / "model.joblib",
+    )
+    # The scanner loads the native boosters, never these sklearn wrappers.
+    # Prove they score the holdout identically before anything ships.
+    parity = check_native_parity(
+        load_payload(path),
+        {"estimator": (served, X_te), "url_estimator": (url_served, X_te[url_cols])},
     )
     save_json(tld_prob, ARTIFACTS_DIR / "tld_legit_prob.json")
     save_json(html_fill, ARTIFACTS_DIR / "html_fill.json")
@@ -216,6 +221,7 @@ def train_phiusiil_model(*, model_name: str = MODEL_NAME) -> dict[str, Any]:
         "live_sample": extra["live_sample"],
         "top_importances": dict(list(importances.items())[:12]),
         "artifact": str(path),
+        "native_parity_max_abs_diff": parity,
     }
     save_json(card, REPORTS_DIR / "06_model_card.json")
     return card

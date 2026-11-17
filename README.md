@@ -44,7 +44,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e ".[dev]"
 
-# train the served model if artifacts/model.joblib is missing
+# train the served model if artifacts/model_meta.json is missing
 phishing train
 
 cd web && npm install && npm run build && cd ..
@@ -112,7 +112,7 @@ When `SPHINX_ALLOW_ANONYMOUS` is the public opt-in (`1` / `all`) and no API key 
 ```bash
 pytest -m "not network"     # lock extractors, loaders, ML helpers, API guards
 cd web && npm test          # React / Vite unit tests
-phishing train              # PhiUSIIL XGBoost → artifacts/model.joblib
+phishing train              # PhiUSIIL XGBoost → artifacts/*.ubj + model_meta.json
 phishing evaluate           # 2012 leakage-delta table (research, not the served model)
 phishing validate           # 2012 Tier-A drift vs 2026 legitimate URLs
 alembic upgrade head        # apply migrations (local and Docker still create tables on boot; Vercel does not)
@@ -134,10 +134,11 @@ scripts/                              served-model train (06) and live eval (07)
 docs/                                 methodology, parameters, findings
 tests/                                pytest; network tests marked skippable
 research/                             2012 coursework — not used at scan time
-artifacts/model.joblib                fitted model (gitignored; run train)
+artifacts/                            native XGBoost model + metadata (gitignored; run train)
 reports/                              CSV / JSON / figures, including the model card
 Dockerfile                            trains at build, serves uvicorn on $PORT
-requirements-serve.txt                Vercel function deps (xgboost-cpu, no shap)
+requirements-serve.txt                Vercel function deps (xgboost-cpu; no sklearn, pandas, shap)
+requirements-train-serve.txt          deploy job: serve deps + sklearn, pandas, alembic
 app.py                                Vercel entrypoint; re-exports api.main:app
 vercel.json                           CDN, headers, cron, function limits
 ```

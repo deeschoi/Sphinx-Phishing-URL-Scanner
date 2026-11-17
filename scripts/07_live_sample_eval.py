@@ -75,7 +75,7 @@ def _disable_shap() -> None:
     """SHAP is 90% of the wall time and does not change the probability."""
     import phishing.explain
 
-    def _no_shap(estimator, X, background=None):  # noqa: ANN001, ARG001
+    def _no_shap(estimator, X, background=None, **_kwargs):  # noqa: ANN001, ARG001
         raise RuntimeError("SHAP disabled for the live sample harness")
 
     phishing.explain.shap_values = _no_shap

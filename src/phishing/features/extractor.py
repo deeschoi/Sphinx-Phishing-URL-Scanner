@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
-import pandas as pd
+from typing import TYPE_CHECKING, Literal
 
 from phishing.config import (
     FEATURE_COLUMNS,
@@ -25,6 +23,9 @@ from phishing.features.phiusiil_url import extract_phiusiil_url_features
 from phishing.features.reachability import LiveProbe, assess_reachability
 from phishing.features.url_features import extract_url_features
 from phishing.schema import FeatureWarning
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 Tier = Literal["A", "B", "full"]
 
@@ -200,6 +201,8 @@ def url_to_features(
         page_fetched=page_fetched,
         tls_inspected=tls_inspected,
     )
+    import pandas as pd
+
     series = pd.Series({c: int(values[c]) for c in FEATURE_COLUMNS}, dtype="int64")
     return series, warnings, probe
 
@@ -212,7 +215,27 @@ def url_to_phiusiil_features(
     tld_prob: dict[str, float] | None = None,
     html_fill: dict[str, float] | None = None,
 ) -> tuple[pd.Series, list[FeatureWarning], LiveProbe]:
+    """:func:`phiusiil_feature_values` as a float64 Series in model order."""
+    import pandas as pd
+
+    values, warnings, probe = phiusiil_feature_values(
+        url, tier=tier, fetch=fetch, timeout=timeout, tld_prob=tld_prob, html_fill=html_fill
+    )
+    return pd.Series(values, dtype="float64"), warnings, probe
+
+
+def phiusiil_feature_values(
+    url: str,
+    tier: Tier = "full",
+    fetch: FetchResult | None = None,
+    timeout: int | None = None,
+    tld_prob: dict[str, float] | None = None,
+    html_fill: dict[str, float] | None = None,
+) -> tuple[dict[str, float], list[FeatureWarning], LiveProbe]:
     """Extract the 48-feature PhiUSIIL vector the served model was trained on.
+
+    Returns a plain dict in ``PHIUSIIL_MODEL_FEATURES`` order, so the scan
+    path does not need pandas.
 
     ``tier='A'`` is URL parsing only. ``tier='B'`` and ``tier='full'`` fetch HTML.
     There is no TLS/WHOIS pass: HTTPS is the scheme bit, and page-quality
@@ -298,5 +321,4 @@ def url_to_phiusiil_features(
         tls_inspected=tls_inspected,
         **observed,
     )
-    series = pd.Series({c: float(values[c]) for c in PHIUSIIL_MODEL_FEATURES}, dtype="float64")
-    return series, warnings, probe
+    return {c: float(values[c]) for c in PHIUSIIL_MODEL_FEATURES}, warnings, probe

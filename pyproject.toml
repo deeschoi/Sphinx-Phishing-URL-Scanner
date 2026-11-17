@@ -18,6 +18,10 @@ dependencies = {file = ["requirements-serve.txt"]}
 
 [tool.uv]
 environments = ["python_version >= '3.12'"]
+# The dependencies are dynamic (read from requirements-serve.txt), and uv
+# caches dynamic metadata keyed on pyproject.toml alone. Without this, editing
+# a pin there left `uv lock` and `uv lock --check` on the old version.
+cache-keys = [{ file = "pyproject.toml" }, { file = "requirements-serve.txt" }]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -64,3 +68,11 @@ ignore = [
 
 [tool.vercel]
 entrypoint = "app:app"
+
+# api/main.py registers web/dist with app.frontend(). Vercel promotes that
+# directory to the CDN, but skips promotion when the app has middleware
+# (security_headers). cdn = true forces it; the CDN copies still get the
+# security headers from vercel.json. web/dist stays in the function bundle
+# (about 0.6 MB) so local runs and a missed promotion still serve the UI.
+[tool.vercel.fastapi.static]
+cdn = true
