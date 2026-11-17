@@ -108,6 +108,13 @@ function stubFetch(handler: (url: string, init?: RequestInit) => Promise<Respons
   return spy;
 }
 
+function isScanPost(input: unknown, init: unknown): boolean {
+  return (
+    String(input).endsWith("/api/scan") &&
+    (init as RequestInit | undefined)?.method === "POST"
+  );
+}
+
 const AGENT_OFF = { enabled: false, model: null, detail: "not configured" };
 
 function stubScanApi(
@@ -115,13 +122,8 @@ function stubScanApi(
 ) {
   return stubFetch((url, init) => {
     if (url.includes("/api/agent")) return jsonResponse(AGENT_OFF);
+    if (url.includes("/api/warm")) return jsonResponse({}, 204);
     if (typeof result === "function") return result(url, init);
-    if (url.includes("/api/scan/jobs") && init?.method === "POST") {
-      return jsonResponse({ job_id: "job-1" }, 202);
-    }
-    if (url.includes("/api/scan/jobs/")) {
-      return jsonResponse({ job_id: "job-1", status: "done", result });
-    }
     if (url.includes("/api/scans/")) return jsonResponse(result);
     return jsonResponse(result);
   });
@@ -132,6 +134,15 @@ afterEach(() => {
 });
 
 describe("Scanner", () => {
+  it("warms the model once on load, before any scan", async () => {
+    const spy = stubScanApi(scanResult());
+    renderScanner();
+    await waitFor(() =>
+      expect(spy.mock.calls.filter(([input]) => String(input) === "/api/warm")).toHaveLength(1),
+    );
+    expect(spy.mock.calls.some(([input, init]) => isScanPost(input, init))).toBe(false);
+  });
+
   it("fills the idle scanner with primer cards", () => {
     renderScanner();
     expect(
@@ -175,16 +186,9 @@ describe("Scanner", () => {
   });
 
   it("shows the API's message when a private target is refused", async () => {
-    stubScanApi((_url, init) => {
-      if (_url.includes("/api/scan/jobs") && init?.method === "POST") {
-        return jsonResponse({ job_id: "job-1" }, 202);
-      }
-      return jsonResponse({
-        job_id: "job-1",
-        status: "error",
-        error: "Refusing to scan a private or local address.",
-      });
-    });
+    stubScanApi(() =>
+      jsonResponse({ detail: "Refusing to scan a private or local address." }, 403),
+    );
     const user = userEvent.setup();
     renderScanner();
 
@@ -198,23 +202,11 @@ describe("Scanner", () => {
 
   it("keeps the previous result on screen when a later scan fails", async () => {
     let posts = 0;
-    stubScanApi((url, init) => {
-      if (url.includes("/api/scan/jobs") && init?.method === "POST") {
-        posts += 1;
-        return jsonResponse({ job_id: `job-${posts}` }, 202);
-      }
-      if (url.includes("/api/scan/jobs/job-1")) {
-        return jsonResponse({
-          job_id: "job-1",
-          status: "done",
-          result: scanResult(),
-        });
-      }
-      return jsonResponse({
-        job_id: "job-2",
-        status: "error",
-        error: "Scan failed: ConnectionError",
-      });
+    stubScanApi(() => {
+      posts += 1;
+      return posts === 1
+        ? jsonResponse(scanResult())
+        : jsonResponse({ detail: "Scan failed: ConnectionError" }, 500);
     });
     const user = userEvent.setup();
     renderScanner();
@@ -388,12 +380,12 @@ describe("Scanner", () => {
     expect(await screen.findByText("legitimate")).toBeInTheDocument();
     await waitFor(() =>
       expect(
-        spy.mock.calls.some(([input]) => String(input).includes("/api/scan/jobs")),
+        spy.mock.calls.some(([input, init]) => isScanPost(input, init)),
       ).toBe(true),
     );
   });
 
-  it("hydrates a stored scan from ?scan= without submitting a job", async () => {
+  it("hydrates a stored scan from ?scan= without running a scan", async () => {
     const spy = stubScanApi(scanResult({ url: "https://stored.example", scan_id: "9" }));
     renderScanner("/?scan=9");
 
@@ -401,25 +393,17 @@ describe("Scanner", () => {
     expect(
       spy.mock.calls.some(([input]) => String(input).includes("/api/scans/9")),
     ).toBe(true);
-    expect(
-      spy.mock.calls.some(([input]) => String(input).includes("/api/scan/jobs")),
-    ).toBe(false);
+    expect(spy.mock.calls.some(([input, init]) => isScanPost(input, init))).toBe(false);
   });
 
   it("does not start a second scan while one is in flight", async () => {
     let resolvePost: (value: Response) => void = () => {};
-    const spy = stubScanApi((url, init) => {
-      if (url.includes("/api/scan/jobs") && init?.method === "POST") {
-        return new Promise<Response>((resolve) => {
+    const spy = stubScanApi(
+      () =>
+        new Promise<Response>((resolve) => {
           resolvePost = resolve;
-        });
-      }
-      return jsonResponse({
-        job_id: "job-1",
-        status: "done",
-        result: scanResult(),
-      });
-    });
+        }),
+    );
     const user = userEvent.setup();
     renderScanner();
 
@@ -429,16 +413,12 @@ describe("Scanner", () => {
 
     resolvePost({
       ok: true,
-      status: 202,
-      json: () => Promise.resolve({ job_id: "job-1" }),
+      status: 200,
+      json: () => Promise.resolve(scanResult()),
     } as Response);
 
     expect(await screen.findByText("legitimate")).toBeInTheDocument();
-    const postCalls = spy.mock.calls.filter(
-      ([input, init]) =>
-        String(input).includes("/api/scan/jobs") &&
-        (init as RequestInit | undefined)?.method === "POST",
-    );
+    const postCalls = spy.mock.calls.filter(([input, init]) => isScanPost(input, init));
     expect(postCalls).toHaveLength(1);
   });
 });

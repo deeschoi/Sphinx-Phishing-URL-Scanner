@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm ci --prefix web && npm run build --prefix web && rm -rf public && mkdir -p public && cp -a web/dist/. public/",
+  "buildCommand": "npm ci --prefix web && npm run build --prefix web",
   "git": {
     "deploymentEnabled": false
   },
@@ -8,7 +8,7 @@
     "app.py": {
       "maxDuration": 60,
       "includeFiles": "{artifacts/**,reports/*.json,web/dist/**}",
-      "excludeFiles": "{datasets/**,research/**,web/node_modules/**,web/src/**,public/**,tests/**,.venv/**,reports/figures/**}"
+      "excludeFiles": "{datasets/**,research/**,web/node_modules/**,web/src/**,tests/**,.venv/**,reports/figures/**}"
     }
   },
   "crons": [
@@ -48,11 +48,29 @@
       ]
     },
     {
-      "source": "/api/(.*)",
+      "source": "/api/((?!findings$|agent$).*)",
       "headers": [
         {
           "key": "Cache-Control",
           "value": "no-store"
+        }
+      ]
+    },
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/fonts/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
         }
       ]
     }

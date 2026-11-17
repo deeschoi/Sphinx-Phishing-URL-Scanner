@@ -96,9 +96,32 @@ def require_frontend(base: str) -> None:
         want = "javascript" if path.endswith(".js") else "text/css"
         if status != 200 or want not in kind:
             fail(f"{path} returned {status} {kind!r}, expected {want}")
-    status, headers, _body = request("GET", base + "/history", timeout=30)
+        # Hashed names never change content, so browsers may keep them a year.
+        cache = header(headers, "Cache-Control")
+        if "immutable" not in cache:
+            fail(f"{path} Cache-Control is {cache!r}, expected immutable")
+    # The CDN, not the function, must answer for the bundle. A MISS on the
+    # first fetch is normal; the repeat has to come from cache.
+    js = next(path for path in assets if path.endswith(".js"))
+    status, headers, _body = request("GET", base + js, timeout=30)
+    cached = header(headers, "x-vercel-cache").upper()
+    if cached not in {"HIT", "STALE", "PRERENDER"}:
+        fail(
+            f"{js} repeat fetch x-vercel-cache={cached!r}: the UI is not on the CDN."
+            " Check that .vercel/output/static was populated at build time."
+        )
+    # Browsers navigate with Accept: text/html; that is what triggers the
+    # index.html fallback for client routes.
+    status, headers, _body = request(
+        "GET", base + "/history", headers={"Accept": "text/html"}, timeout=30
+    )
     if status != 200 or "text/html" not in header(headers, "Content-Type"):
         fail(f"/history (client route) returned {status}")
+    status, headers, _body = request(
+        "GET", base + "/api/does-not-exist", headers={"Accept": "text/html"}, timeout=30
+    )
+    if status != 404 or "application/json" not in header(headers, "Content-Type"):
+        fail(f"/api/does-not-exist returned {status}: the SPA fallback is masking the API")
     # 404 with docs off, JSON with SPHINX_ENABLE_DOCS=1; never the SPA page.
     status, headers, _body = request("GET", base + "/openapi.json", timeout=30)
     if "text/html" in header(headers, "Content-Type"):

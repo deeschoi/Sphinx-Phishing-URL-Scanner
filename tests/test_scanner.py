@@ -58,8 +58,9 @@ def test_research_findings_has_ui_keys():
 def test_api_module_imports():
     from api.main import app
 
+    # "/" is app.frontend(), not a path operation; tests/test_frontend.py covers it.
     routes = {getattr(route, "path", None) for route in app.routes}
-    assert "/" in routes
+    assert "/api/warm" in routes
     assert "/api/scan" in routes
     assert "/api/scan/jobs" in routes
     assert "/api/scan/batch" in routes

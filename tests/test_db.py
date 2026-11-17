@@ -269,8 +269,9 @@ def test_open_anonymous_history_is_scoped_to_the_caller(db, monkeypatch):
     assert stats["total_scans_all_time"] == 1
 
 
-def test_serverless_postgres_uses_a_null_pool(monkeypatch):
-    from sqlalchemy.pool import NullPool
+def test_serverless_postgres_keeps_a_small_recycled_pool(monkeypatch):
+    """Fluid Compute reuses instances; a NullPool reconnected on every session."""
+    from sqlalchemy.pool import QueuePool
 
     from phishing import db as db_module
 
@@ -283,7 +284,10 @@ def test_serverless_postgres_uses_a_null_pool(monkeypatch):
     monkeypatch.setattr(db_module, "_Session", None)
     try:
         engine = db_module.get_engine()
-        assert isinstance(engine.pool, NullPool)
+        assert isinstance(engine.pool, QueuePool)
+        assert engine.pool.size() == 1
+        assert engine.pool._max_overflow == 4
+        assert engine.pool._recycle == 240
         assert engine.pool._pre_ping is True
     finally:
         monkeypatch.setattr(db_module, "_engine", None)

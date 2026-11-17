@@ -39,7 +39,6 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
-from sqlalchemy.pool import NullPool
 
 from phishing.config import PHIUSIIL_MODEL_FEATURES, PROJECT_ROOT
 from phishing.features.reachability import LIVE_RISK_VERDICTS
@@ -262,13 +261,18 @@ def get_engine():
         connect_args = {"check_same_thread": False, "timeout": 15} if is_sqlite else {}
         engine_kwargs: dict[str, Any] = {}
         if not is_sqlite:
-            # Drop connections a serverless instance left behind, and don't
-            # keep a pool across invocations that share Neon's pooler.
+            # pre_ping drops connections that died while an instance was idle.
             engine_kwargs["pool_pre_ping"] = True
             from phishing.settings import serverless
 
             if serverless():
-                engine_kwargs["poolclass"] = NullPool
+                # Fluid Compute reuses an instance across many requests, so a
+                # NullPool paid a fresh TLS connect to Neon on every session
+                # (several per scan or job poll). Keep a small pool instead.
+                # The URL is Neon's pooled (PgBouncer) endpoint, so idle
+                # client connections are cheap there, and recycling under
+                # PgBouncer's idle timeout avoids handing out dead sockets.
+                engine_kwargs.update(pool_size=1, max_overflow=4, pool_recycle=240)
         _engine = create_engine(url, future=True, connect_args=connect_args, **engine_kwargs)
         if is_sqlite:
             _enable_sqlite_wal(_engine)

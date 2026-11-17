@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
-
-import pandas as pd
 
 from phishing.config import (
     ARTIFACTS_DIR,
@@ -31,7 +29,12 @@ from phishing.netguard import (
     strip_userinfo,
 )
 from phishing.schema import FeatureWarning, ModelArtifact
-from phishing.tuning import load_payload
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+# The model stack (xgboost, scipy, sklearn to unpickle) loads on the first
+# scan, not at import: health, findings and agent requests never pay for it.
 
 __all__ = [
     "UnsafeTargetError",
@@ -76,6 +79,8 @@ def _loaded_payload() -> dict[str, Any]:
         raise FileNotFoundError(
             f"No trained model at {path}. From the repo root run: phishing train"
         )
+    from phishing.tuning import load_payload
+
     return load_payload(path)
 
 
@@ -634,8 +639,8 @@ def scan(
     return _clean_json(payload_out)
 
 
-def research_findings() -> dict[str, Any]:
-    """Headline numbers for the Research findings tab."""
+@lru_cache(maxsize=1)
+def _research_findings() -> dict[str, Any]:
 
     leakage = load_json(REPORTS_DIR / "01_grouped_evaluation.json")
     shap_res = load_json(REPORTS_DIR / "03_shap.json")
@@ -655,3 +660,14 @@ def research_findings() -> dict[str, Any]:
         ],
     }
     return _clean_json(payload)
+
+
+def research_findings() -> dict[str, Any]:
+    """Headline numbers for the Research findings tab.
+
+    The reports only change on deploy, so they are read once per instance.
+    Callers get a copy, since the payload is a plain mutable dict.
+    """
+    import copy
+
+    return copy.deepcopy(_research_findings())

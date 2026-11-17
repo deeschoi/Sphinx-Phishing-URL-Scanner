@@ -93,6 +93,16 @@ export function scanUrl(url: string, timeout = 8, signal?: AbortSignal) {
   });
 }
 
+/** Fire-and-forget: ask the API to load the model on its instance so the
+ *  first scan does not pay for it. Errors are irrelevant to the page. */
+export function warmScanner(): void {
+  try {
+    void fetch("/api/warm", { keepalive: true }).catch(() => undefined);
+  } catch {
+    // fetch missing (old browser, some test setups): nothing to warm.
+  }
+}
+
 export function createScanJob(url: string, timeout = 8, signal?: AbortSignal) {
   return request<{ job_id: string }>("/api/scan/jobs", {
     method: "POST",

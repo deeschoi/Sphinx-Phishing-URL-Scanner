@@ -12,8 +12,11 @@ builder actually uses:
   would install into a local venv that is never shipped;
 * ``uv.lock`` installs the project itself and the serve stack, and no NVIDIA
   or NCCL wheel;
-* ``web/dist/index.html`` exists, because the function serves the UI itself
-  (the CDN rewrite routes to the app), and ``vercel.json`` bundles it;
+* ``web/dist/index.html`` exists and ``vercel.json`` bundles it, so local
+  runs and a missed promotion still serve the UI from the function;
+* the build promoted the UI to the CDN (``.vercel/output/static`` holds
+  ``index.html`` and at least one ``assets/*.js``). Without that, every page
+  view waits on a cold Python function again (11-20 s measured);
 * the ``.func`` directory is still under 500 MiB uncompressed.
 """
 
@@ -27,6 +30,7 @@ from pathlib import Path
 LIMIT = 500 * 1024 * 1024
 ROOT = Path(__file__).resolve().parent.parent
 FUNCTIONS = ROOT / ".vercel" / "output" / "functions"
+STATIC = ROOT / ".vercel" / "output" / "static"
 PROJECT = ROOT / ".vercel" / "project.json"
 REQUIRED = {"phishing", "fastapi", "xgboost-cpu", "scikit-learn", "numpy", "pandas"}
 FORBIDDEN_PREFIXES = ("nvidia-",)
@@ -67,6 +71,20 @@ def frontend_errors() -> list[str]:
     return errors
 
 
+def static_output_errors() -> list[str]:
+    """The UI must be in the CDN output, not only inside the function."""
+    errors = []
+    if not (STATIC / "index.html").is_file():
+        errors.append(
+            f"{STATIC.relative_to(ROOT)}/index.html is missing: the build did not "
+            "promote web/dist to the CDN. Check app.frontend() in api/main.py and "
+            "[tool.vercel.fastapi.static] cdn = true in pyproject.toml."
+        )
+    if not any((STATIC / "assets").glob("*.js")):
+        errors.append(f"{STATIC.relative_to(ROOT)}/assets has no .js bundle")
+    return errors
+
+
 def lock_errors() -> list[str]:
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     names = {package["name"] for package in lock.get("package", [])}
@@ -96,7 +114,11 @@ def function_errors() -> list[str]:
 
 def main() -> int:
     errors = (
-        install_command_errors() + lock_errors() + frontend_errors() + function_errors()
+        install_command_errors()
+        + lock_errors()
+        + frontend_errors()
+        + static_output_errors()
+        + function_errors()
     )
     for error in errors:
         print(error, file=sys.stderr)

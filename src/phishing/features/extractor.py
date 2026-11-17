@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
-import pandas as pd
+from typing import TYPE_CHECKING, Literal
 
 from phishing.config import (
     FEATURE_COLUMNS,
@@ -25,6 +23,9 @@ from phishing.features.phiusiil_url import extract_phiusiil_url_features
 from phishing.features.reachability import LiveProbe, assess_reachability
 from phishing.features.url_features import extract_url_features
 from phishing.schema import FeatureWarning
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 Tier = Literal["A", "B", "full"]
 
@@ -200,6 +201,8 @@ def url_to_features(
         page_fetched=page_fetched,
         tls_inspected=tls_inspected,
     )
+    import pandas as pd
+
     series = pd.Series({c: int(values[c]) for c in FEATURE_COLUMNS}, dtype="int64")
     return series, warnings, probe
 
@@ -298,5 +301,7 @@ def url_to_phiusiil_features(
         tls_inspected=tls_inspected,
         **observed,
     )
+    import pandas as pd
+
     series = pd.Series({c: float(values[c]) for c in PHIUSIIL_MODEL_FEATURES}, dtype="float64")
     return series, warnings, probe

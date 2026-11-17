@@ -12,9 +12,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
@@ -70,11 +69,18 @@ _SECURITY_CSP = (
     "style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; "
     "base-uri 'none'; object-src 'none'"
 )
-_NO_STORE_PREFIXES = ("/api/scan", "/api/chat", "/api/stats", "/api/internal")
+_NO_STORE_PREFIXES = ("/api/scan", "/api/chat", "/api/stats", "/api/internal", "/api/warm")
+# Hashed Vite bundles never change under a given name. On Vercel the CDN
+# serves them with the same header from vercel.json; this covers Docker.
+_IMMUTABLE_PREFIXES = ("/assets/", "/fonts/")
+_IMMUTABLE = "public, max-age=31536000, immutable"
+# Read-only answers that only change on deploy. The CDN may cache them, so the
+# Findings tab and the analyst status do not wait on a cold function.
+_EDGE_CACHED = "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400"
 
 ROOT = Path(__file__).resolve().parent.parent
-DIST_DIR = ROOT / "web" / "dist"
-_RESERVED_FRONTEND = {"api", "docs", "redoc", "openapi.json"}
+# SPHINX_DIST_DIR lets tests and odd layouts point at another build.
+DIST_DIR = Path(env("SPHINX_DIST_DIR", "") or ROOT / "web" / "dist")
 
 MISSING_FRONTEND = """<!doctype html>
 <title>Frontend not built</title>
@@ -117,8 +123,11 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    if request.url.path.startswith(_NO_STORE_PREFIXES):
+    path = request.url.path
+    if path.startswith(_NO_STORE_PREFIXES):
         response.headers["Cache-Control"] = "no-store"
+    elif path.startswith(_IMMUTABLE_PREFIXES) and response.status_code == 200:
+        response.headers["Cache-Control"] = _IMMUTABLE
     forwarded = request.headers.get("x-forwarded-proto", "")
     if request.url.scheme == "https" or forwarded.split(",")[0].strip() == "https":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -665,13 +674,14 @@ def read_scan_batch(batch_id: str, http_request: Request) -> dict:
 
 
 @app.get("/api/agent")
-def agent_status() -> dict:
+def agent_status(response: Response) -> dict:
     """Whether chat needs a visitor-supplied Groq key.
 
     The panel is always offered. Scans do not need a key. Chat does, from the
     browser (``X-Groq-Api-Key``) or from optional server ``GROQ_API_KEY``.
     """
     server_key = bool(groq_api_key())
+    response.headers["Cache-Control"] = _EDGE_CACHED
     return {
         "enabled": True,
         "requires_user_key": not server_key,
@@ -741,8 +751,9 @@ def model_info() -> dict:
 
 
 @app.get("/api/findings")
-def findings() -> dict:
+def findings(response: Response) -> dict:
     """Headline results from the analysis, surfaced alongside the scanner."""
+    response.headers["Cache-Control"] = _EDGE_CACHED
     return research_findings()
 
 
@@ -863,42 +874,50 @@ def ready() -> dict:
     return {"status": "ready", **checks}
 
 
-def _frontend_file(relative: str) -> Path | None:
-    if not relative:
-        return None
-    candidate = (DIST_DIR / relative).resolve()
+@app.get("/api/warm", status_code=204, include_in_schema=False)
+def warm(http_request: Request) -> Response:
+    """Load the model on this instance before the visitor presses Scan.
+
+    The scanner page calls this once on load. Fluid Compute reuses warm
+    instances, so the scan that follows usually skips the 1-3 s model load.
+    Never fails the caller: a missing model is /api/ready's job to report.
+    """
+    read_limiter.check(client_key(http_request))
     try:
-        candidate.relative_to(DIST_DIR.resolve())
-    except ValueError:
-        return None
-    return candidate if candidate.is_file() else None
+        available_models()
+    except Exception:  # noqa: BLE001 - warming is best effort
+        log.exception("model warm-up failed")
+    return Response(status_code=204)
 
 
-def _frontend_index():
-    index_path = DIST_DIR / "index.html"
-    if index_path.is_file():
-        return FileResponse(index_path)
-    return HTMLResponse(MISSING_FRONTEND, status_code=503)
+@app.api_route(
+    "/api/{path:path}",
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+    include_in_schema=False,
+)
+def unknown_api(path: str) -> None:
+    """Unknown API paths get a JSON 404, never the SPA page."""
+    raise HTTPException(status_code=404, detail="Not found")
 
 
-@app.get("/")
-def index():
-    """Serve the built React app, or a short how-to if it has not been built."""
-    return _frontend_index()
-
-
-@app.get("/{full_path:path}")
-def spa(full_path: str):
-    """Client-side routes (/history, /stats, /findings) all share index.html."""
-    first = full_path.split("/", 1)[0]
-    if first in _RESERVED_FRONTEND:
+if not _DOCS_ENABLED:
+    # A browser asking for these with Accept: text/html would otherwise get
+    # the SPA fallback, which reads as "docs are broken" rather than "off".
+    @app.get("/docs", include_in_schema=False)
+    @app.get("/redoc", include_in_schema=False)
+    @app.get("/openapi.json", include_in_schema=False)
+    def docs_disabled() -> None:
         raise HTTPException(status_code=404, detail="Not found")
-    direct = _frontend_file(full_path)
-    if direct is not None:
-        return FileResponse(direct)
-    return _frontend_index()
 
 
-_assets = DIST_DIR / "assets"
-if _assets.is_dir():
-    app.mount("/assets", StaticFiles(directory=_assets), name="assets")
+if (DIST_DIR / "index.html").is_file():
+    # Low-priority routes: every path operation above wins. On Vercel the
+    # builder promotes this directory to the CDN, so the page, its hashed
+    # assets and client routes (/history, /stats) never wake the function.
+    # Unknown paths fall back to index.html only for browser navigations.
+    app.frontend("/", directory=DIST_DIR, fallback="index.html", check_dir=False)
+else:
+
+    @app.get("/", include_in_schema=False)
+    def frontend_not_built() -> HTMLResponse:
+        return HTMLResponse(MISSING_FRONTEND, status_code=503)

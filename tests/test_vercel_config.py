@@ -24,8 +24,8 @@ def test_cdn_policy_matches_the_api_and_deploys_only_from_ci():
     assert config["git"]["deploymentEnabled"] is False
     assert config["functions"]["app.py"]["maxDuration"] == 60
     assert "artifacts/**" in config["functions"]["app.py"]["includeFiles"]
-    # The function serves the UI itself: CLI 65 routes the SPA rewrite to the
-    # app, so a function without web/dist answers "/" with its 503 page.
+    # The CDN serves the UI (app.frontend promotion). web/dist stays in the
+    # function too, so a missed promotion degrades to slow, not blank.
     assert "web/dist/**" in config["functions"]["app.py"]["includeFiles"]
     assert "web/dist/**" not in config["functions"]["app.py"]["excludeFiles"]
     assert config["crons"][0]["path"] == "/api/internal/maintenance"
@@ -33,10 +33,45 @@ def test_cdn_policy_matches_the_api_and_deploys_only_from_ci():
     # No SPA rewrite. CLI 65 hands a backend project's rewrite to the app as
     # the destination path, so "/assets/index-*.js" reached FastAPI as
     # "/index.html", the browser got HTML for its module script, and the UI
-    # rendered blank. Unmatched paths already reach the app, whose catch-all
-    # serves web/dist files and falls back to index.html.
+    # rendered blank. app.frontend() handles client routes instead.
     for rule in config.get("rewrites", []):
         assert "index.html" not in rule.get("destination", ""), rule
+    # public/ was a copy of web/dist that Vercel never served for this preset.
+    assert "public" not in config["buildCommand"]
+
+
+def _header_rules(config: dict) -> dict[str, dict[str, str]]:
+    return {
+        rule["source"]: {item["key"]: item["value"] for item in rule["headers"]}
+        for rule in config["headers"]
+    }
+
+
+def test_hashed_assets_are_immutable_and_findings_are_cacheable():
+    import re
+
+    config = json.loads((ROOT / "vercel.json").read_text(encoding="utf-8"))
+    rules = _header_rules(config)
+    for source in ("/assets/(.*)", "/fonts/(.*)"):
+        assert "immutable" in rules[source]["Cache-Control"], source
+    no_store = [s for s, h in rules.items() if h.get("Cache-Control") == "no-store"]
+    assert len(no_store) == 1
+    # Vercel matches the source against the whole path.
+    pattern = re.compile("^" + no_store[0] + "$")
+    for path in ("/api/scan", "/api/scan/jobs/x", "/api/chat", "/api/scans", "/api/warm"):
+        assert pattern.match(path), path
+    for path in ("/api/findings", "/api/agent"):
+        assert not pattern.match(path), path
+
+
+def test_ui_is_promoted_to_the_cdn():
+    import tomllib
+
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert project["tool"]["vercel"]["fastapi"]["static"]["cdn"] is True
+    source = (ROOT / "api" / "main.py").read_text(encoding="utf-8")
+    assert "app.frontend(" in source
+    assert "StaticFiles" not in source
 
 
 def test_vercel_entrypoint_is_the_root_app():
