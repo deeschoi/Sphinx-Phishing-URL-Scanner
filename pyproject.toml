@@ -18,6 +18,10 @@ dependencies = {file = ["requirements-serve.txt"]}
 
 [tool.uv]
 environments = ["python_version >= '3.12'"]
+# The dependencies are dynamic (read from requirements-serve.txt), and uv
+# caches dynamic metadata keyed on pyproject.toml alone. Without this, editing
+# a pin there left `uv lock` and `uv lock --check` on the old version.
+cache-keys = [{ file = "pyproject.toml" }, { file = "requirements-serve.txt" }]
 
 [tool.setuptools.packages.find]
 where = ["src"]
