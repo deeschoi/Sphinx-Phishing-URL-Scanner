@@ -119,3 +119,24 @@ def test_bundle_check_requires_the_frontend_in_the_function():
     errors = module.frontend_errors()
     # web/dist exists only after a frontend build; the config half must pass.
     assert not any("vercel.json" in error for error in errors)
+
+
+def test_the_page_loads_nothing_the_csp_blocks():
+    """The CSP allows 'self' only, so a Google Fonts link silently never loads.
+
+    Fonts are self-hosted from web/public/fonts and served immutable, so a
+    changed file needs a new name (the upstream version is in it).
+    """
+    import re
+
+    html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    css = (ROOT / "web" / "src" / "styles.css").read_text(encoding="utf-8")
+    external = re.findall(r'(?:href|src)="(https?://[^"]+)"', html)
+    assert not external, f"index.html loads from another origin: {external}"
+    assert "fonts.googleapis" not in css and "fonts.gstatic" not in css
+    fonts = ROOT / "web" / "public" / "fonts"
+    for name in re.findall(r'url\("/fonts/([^"]+)"\)', css):
+        assert (fonts / name).is_file(), name
+        assert re.search(r"-v\d+-", name), f"{name} has no version: it is cached immutable"
+    for name in re.findall(r'href="/fonts/([^"]+)"', html):
+        assert (fonts / name).is_file(), name
