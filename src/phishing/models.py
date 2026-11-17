@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sklearn.base import BaseEstimator, clone
+from sklearn.base import BaseEstimator
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
@@ -100,7 +100,3 @@ def build_model(name: str, **kwargs: Any) -> BaseEstimator:
 def build_models(names: list[str] | None = None) -> dict[str, BaseEstimator]:
     names = names or ALL_MODELS
     return {name: build_model(name) for name in names}
-
-
-def clone_model(estimator: BaseEstimator) -> BaseEstimator:
-    return clone(estimator)

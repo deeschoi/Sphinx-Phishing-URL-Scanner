@@ -150,21 +150,6 @@ PHISHING = -1
 SUSPICIOUS = 0
 LEGITIMATE = 1
 
-# Recoded target: 1 = phishing (positive class), 0 = legitimate.
-POSITIVE_CLASS = 1
-NEGATIVE_CLASS = 0
-
-# Default classification threshold before calibration / F1 search.
-DEFAULT_THRESHOLD = 0.5
-
-# Risk bands applied to calibrated phishing probability.
-RISK_BANDS = [
-    (0.00, 0.25, "low"),
-    (0.25, 0.50, "medium"),
-    (0.50, 0.75, "high"),
-    (0.75, 1.01, "critical"),
-]
-
 # What a live scan must do to obtain each feature. Drives the deployment-tier
 # scenarios in research/analysis/04 and the scan-coverage reporting in the UI.
 SOURCE = {
@@ -427,6 +412,7 @@ PHIUSIIL_MODEL_FEATURES = PHIUSIIL_URL_FEATURES + PHIUSIIL_HTML_FEATURES
 assert len(PHIUSIIL_MODEL_FEATURES) == 48
 assert len(set(PHIUSIIL_MODEL_FEATURES)) == 48
 assert set(PHIUSIIL_SPA_LINK_FEATURES) <= set(PHIUSIIL_HTML_FEATURES)
+assert not (set(PHIUSIIL_DROP) & set(PHIUSIIL_MODEL_FEATURES))
 
 PHIUSIIL_FEATURE_LABELS = {
     "URLLength": "URL length",

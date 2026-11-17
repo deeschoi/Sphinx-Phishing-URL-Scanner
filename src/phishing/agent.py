@@ -34,7 +34,6 @@ from phishing.settings import (
     GROQ_MAX_TOOL_STEPS,
     GROQ_MODEL,
     GROQ_TIMEOUT,
-    groq_api_key,
 )
 
 log = logging.getLogger(__name__)
@@ -59,14 +58,6 @@ def looks_like_groq_key(key: str) -> bool:
         return False
     rest = key[4:]
     return rest.isascii() and rest.isprintable() and " " not in rest
-
-
-def is_enabled() -> bool:
-    """Whether the operator configured a server-side Groq key.
-
-    Chat can still run without this: the browser may send ``X-Groq-Api-Key``.
-    """
-    return bool(groq_api_key())
 
 
 # --------------------------------------------------------------------------

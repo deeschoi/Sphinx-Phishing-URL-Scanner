@@ -1,14 +1,9 @@
-"""SHAP explanations for tree models, reused by notebooks and the scan CLI."""
+"""SHAP explanations for tree models, reused by notebooks and the scanner."""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
-
 import numpy as np
 import pandas as pd
-
-from phishing.config import FIGURES_DIR
 
 
 def _unwrap(estimator):
@@ -91,43 +86,6 @@ def shap_values(estimator, X: pd.DataFrame, background: pd.DataFrame | None = No
     return explainer, np.asarray(values)
 
 
-def top_contributors(
-    feature_names: list[str],
-    shap_row: np.ndarray,
-    feature_row: pd.Series,
-    k: int = 5,
-) -> list[dict[str, Any]]:
-    """Largest-magnitude SHAP values for a single instance, with signs."""
-    order = np.argsort(-np.abs(shap_row))[:k]
-    out = []
-    for i in order:
-        name = feature_names[i]
-        value = float(shap_row[i])
-        out.append(
-            {
-                "feature": name,
-                "shap": value,
-                "encoded_value": float(feature_row[name]),
-                "direction": "phishing" if value > 0 else "legitimate",
-            }
-        )
-    return out
-
-
 def global_importance(feature_names: list[str], values: np.ndarray) -> pd.Series:
     mean_abs = np.abs(values).mean(axis=0)
     return pd.Series(mean_abs, index=feature_names).sort_values(ascending=False)
-
-
-def save_beeswarm(explainer, values, X: pd.DataFrame, path: Path | None = None) -> Path:
-    import matplotlib.pyplot as plt
-    import shap
-
-    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
-    path = path or (FIGURES_DIR / "shap_beeswarm.png")
-    plt.figure()
-    shap.summary_plot(values, X, show=False)
-    plt.tight_layout()
-    plt.savefig(path, dpi=120, bbox_inches="tight")
-    plt.close()
-    return path

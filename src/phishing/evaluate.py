@@ -1,9 +1,8 @@
-"""Cross-validation, holdout scoring, threshold search, and calibration."""
+"""Cross-validation, threshold search, and calibration."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -24,7 +23,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, cross_validate
 
 from phishing.config import N_SPLITS, RANDOM_STATE
-from phishing.models import build_models, clone_model
+from phishing.models import build_models
 
 SCORING = {
     "accuracy": "accuracy",
@@ -100,24 +99,6 @@ def summarize_cv(cv_results: dict[str, np.ndarray]) -> dict[str, str]:
         out[f"{metric}_mean"] = float(vals.mean())
         out[f"{metric}_std"] = float(vals.std())
     return out
-
-
-def evaluate_holdout(
-    estimator: BaseEstimator,
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    X_test: pd.DataFrame,
-    y_test: pd.Series,
-    threshold: float = 0.5,
-) -> dict[str, Any]:
-    model = clone_model(estimator)
-    model.fit(X_train, y_train)
-    proba = model.predict_proba(X_test)[:, 1]
-    pred = (proba >= threshold).astype(int)
-    metrics = metric_dict(y_test, pred, proba)
-    metrics.update(confusion_counts(y_test, pred))
-    metrics["threshold"] = float(threshold)
-    return {"model": model, "proba": proba, "pred": pred, "metrics": metrics}
 
 
 def leakage_delta_table(
