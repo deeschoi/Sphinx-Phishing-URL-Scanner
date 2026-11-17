@@ -1,0 +1,13 @@
+# The deploy job's training and migration environment: the function's
+# runtime set plus what fitting and `alembic upgrade` need. None of these
+# ship in the function. The served model is native XGBoost (.ubj), so
+# scikit-learn and pandas are training-only, and alembic runs in CI before
+# the deploy, never on a request.
+#
+# Training uses xgboost-cpu from requirements-serve.txt, not xgboost==2.1.4
+# from requirements.txt, whose Linux wheel pulls in nvidia-nccl-cu12.
+-r requirements-serve.txt
+pandas==2.2.2
+scikit-learn==1.9.1
+joblib==1.4.2
+alembic==1.19.1

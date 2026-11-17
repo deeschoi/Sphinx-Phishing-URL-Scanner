@@ -107,7 +107,7 @@ def _patch_scan(
 
     features = pd.Series({c: 1.0 for c in PHIUSIIL_MODEL_FEATURES}, dtype="float64")
     monkeypatch.setattr(
-        scanner, "url_to_phiusiil_features", lambda *a, **k: (features, [], probe)
+        scanner, "phiusiil_feature_values", lambda *a, **k: (features, [], probe)
     )
     full_est, artifact = _fake_model(probability)
     artifact.extra["url_features"] = list(PHIUSIIL_URL_FEATURES)

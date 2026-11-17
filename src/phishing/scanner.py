@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import urlparse
 
 from phishing.config import (
@@ -17,7 +18,8 @@ from phishing.config import (
     UNAVAILABLE_2026,
     VALUE_MEANING,
 )
-from phishing.features.extractor import url_to_phiusiil_features
+from phishing.features.extractor import phiusiil_feature_values
+from phishing.features.fetch import fetch_page
 from phishing.features.phiusiil_url import is_free_hosting_platform, is_kit_shaped_path
 from phishing.features.reachability import LiveProbe
 from phishing.features.url_features import SHORTENERS
@@ -30,11 +32,9 @@ from phishing.netguard import (
 )
 from phishing.schema import FeatureWarning, ModelArtifact
 
-if TYPE_CHECKING:
-    import pandas as pd
-
-# The model stack (xgboost, scipy, sklearn to unpickle) loads on the first
-# scan, not at import: health, findings and agent requests never pay for it.
+# The model stack (xgboost, scipy, numpy) loads on the first scan or
+# /api/warm, not at import: health, findings and agent requests never pay
+# for it. The scan path does not use pandas or scikit-learn at all.
 
 __all__ = [
     "UnsafeTargetError",
@@ -74,14 +74,38 @@ def _normalise_url(url: str) -> str:
 
 @lru_cache(maxsize=1)
 def _loaded_payload() -> dict[str, Any]:
-    path = ARTIFACTS_DIR / "model.joblib"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"No trained model at {path}. From the repo root run: phishing train"
-        )
-    from phishing.tuning import load_payload
+    from phishing.tuning import META_NAME, load_payload
 
-    return load_payload(path)
+    return load_payload(ARTIFACTS_DIR / META_NAME)
+
+
+def _model_loaded() -> bool:
+    # A test that swaps in a stub (no cache_info) counts as loaded.
+    info = getattr(_loaded_payload, "cache_info", None)
+    return info is None or info().currsize > 0
+
+
+def _payload_and_fetch(url: str, timeout: int, tier: str, fetch):
+    """Load the model and fetch the page at the same time on a cold instance.
+
+    The extractor needs the model's TLD prior and HTML fills, so the model
+    has to load first, but the page fetch does not need either. Running the
+    fetch in a worker hides the 1-3 s model load behind the 1-8 s network
+    wait. A warm instance, or a caller that supplies ``fetch``, takes the
+    plain path.
+    """
+    if fetch is not None or tier not in ("B", "full") or _model_loaded():
+        return _loaded_payload(), fetch
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="scan-fetch") as pool:
+        pending = pool.submit(fetch_page, url, timeout=timeout)
+        payload = _loaded_payload()
+        return payload, pending.result()
+
+
+def _row(features: dict[str, float], names: list[str]):
+    import numpy as np
+
+    return np.array([[features[name] for name in names]], dtype=np.float64)
 
 
 def _loaded_model() -> tuple[Any, ModelArtifact]:
@@ -202,7 +226,7 @@ def _measured(feature: str, warning_map: dict[str, FeatureWarning]) -> bool:
 def _signals(
     feature_names: list[str],
     shap_row,
-    feature_row: pd.Series,
+    feature_row: dict[str, float],
     warning_map: dict[str, FeatureWarning],
     k: int = 12,
 ) -> list[dict[str, Any]]:
@@ -392,12 +416,12 @@ def scan(
     """Extract features, score with the deployable model, and explain the verdict."""
     normalised = _normalise_url(url)
     assert_public_url(normalised)
-    payload = _loaded_payload()
+    payload, fetch = _payload_and_fetch(normalised, timeout, tier, fetch)
     estimator, artifact = payload["estimator"], payload["artifact"]
     url_estimator = payload.get("url_estimator")
     tld_prob = artifact.extra.get("tld_legit_prob") or {}
     html_fill = artifact.extra.get("html_fill") or {}
-    features, warnings, probe = url_to_phiusiil_features(
+    raw_features, warnings, probe = phiusiil_feature_values(
         normalised,
         tier=tier,  # type: ignore[arg-type]
         timeout=timeout,
@@ -405,6 +429,8 @@ def scan(
         tld_prob=tld_prob,
         html_fill=html_fill,
     )
+    # dict() also accepts a Series from a test double.
+    features = {str(name): float(value) for name, value in dict(raw_features).items()}
     # The page that was actually scored, which is not always the one pasted:
     # a 302 to another host is exactly what redirect-based phishing does.
     final_url = strip_userinfo(probe.final_url or normalised)
@@ -425,7 +451,7 @@ def scan(
         model_label = artifact.model_name
         metrics = artifact.metrics
 
-    X = features[feature_names].to_frame().T
+    X = _row(features, feature_names)
     probability = float(scorer.predict_proba(X)[:, 1][0])
 
     # Score the URL string on its own regardless of which model is serving.
@@ -441,7 +467,7 @@ def scan(
             url_probability = probability
         else:
             page_probability = probability
-            url_row = features[url_feature_names].to_frame().T
+            url_row = _row(features, url_feature_names)
             url_probability = float(url_estimator.predict_proba(url_row)[:, 1][0])
 
     url_pattern_risk = (
@@ -515,13 +541,15 @@ def scan(
     else:
         explained_estimator = scorer
         explained_names = feature_names
-    explained_X = features[explained_names].to_frame().T
+    explained_X = _row(features, explained_names)
 
     signals: list[dict[str, Any]] = []
     try:
         from phishing.explain import shap_values
 
-        _, values = shap_values(explained_estimator, explained_X, background=explained_X)
+        _, values = shap_values(
+            explained_estimator, explained_X, feature_names=explained_names
+        )
         signals = _signals(explained_names, values[0], features, warning_map)
     except Exception as exc:  # noqa: BLE001
         signals = []
@@ -634,7 +662,7 @@ def scan(
         ),
         "threshold": warn,
         "warnings": [w.to_dict() for w in warnings],
-        "features": features.to_dict(),
+        "features": dict(features),
     }
     return _clean_json(payload_out)
 

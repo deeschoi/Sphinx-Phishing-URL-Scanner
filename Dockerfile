@@ -27,7 +27,8 @@ COPY src/ ./src/
 COPY scripts/ ./scripts/
 RUN pip install . --no-deps
 
-# Produces artifacts/model.joblib and reports/06_model_card.json.
+# Produces artifacts/model_meta.json, artifacts/{page,url}.ubj and
+# reports/06_model_card.json.
 RUN python scripts/06_train_final.py
 
 # pip is only needed to build the venv. A current pip vendors msgpack 1.1.2,

@@ -1,21 +1,23 @@
 # Runtime packages for the Vercel function. Training and research stay in
-# requirements.txt (matplotlib, statsmodels, mlxtend, kmodes, python-whois,
-# lightgbm, shap). Docker and CI keep installing that file.
+# requirements.txt (pandas, scikit-learn, matplotlib, statsmodels, mlxtend,
+# kmodes, python-whois, lightgbm, shap). Docker and CI keep installing that
+# file; the deploy job trains from requirements-train-serve.txt.
+#
+# The served model is native XGBoost (artifacts/*.ubj plus model_meta.json),
+# so the function needs neither scikit-learn (to unpickle XGBClassifier) nor
+# pandas. Do not add them back: xgboost imports both opportunistically when
+# installed, which costs about 0.9 s on every cold start.
+# tests/test_model_artifact.py scans with them blocked.
 #
 # xgboost-cpu==2.1.4 is not on PyPI (CPU builds start at 3.0.0). The 2.1.4
 # Linux wheel links libnccl.so.2. The nvidia-nccl-cu12 wheel that provides it
 # is 182MB compressed at 2.22.3 and 308MB at 2.27.7, which on its own blows
-# the function budget. The deploy workflow trains with THIS file so the
-# pickled booster matches the runtime. Docker keeps training with
-# xgboost==2.1.4 from requirements.txt.
+# the function budget. Native .ubj files load across xgboost versions, so a
+# model trained by xgboost 2.1.4 in Docker also loads here.
 #
-# scikit-learn 1.9.1 publishes manylinux_2_27/2_28 wheels, not manylinux2014.
-# Vercel's build image is Amazon Linux 2023 (glibc 2.34), so those wheels
-# install there and on ubuntu-latest. Do not run `vercel build` on macOS:
-# the CLI would vendor host wheels the function cannot load.
-# Unzipped manylinux_2_28 wheels, including dependencies: about 320 MiB,
-# over the 225 MB standard cap. The deploy sets
-# VERCEL_SUPPORT_LARGE_FUNCTIONS=1 (limit 5 GB).
+# Do not run `vercel build` on macOS: the CLI would vendor host wheels the
+# function cannot load. The deploy sets VERCEL_SUPPORT_LARGE_FUNCTIONS=1;
+# measure the bundle (scripts/check_function_bundle.py) before dropping it.
 #
 # pyproject.toml reads its dependencies from this file and the Vercel
 # builder installs them from uv.lock. Run `uv lock` after any change here.
@@ -23,10 +25,7 @@
 # large function never ships. scripts/check_function_bundle.py fails the
 # deploy on an Install Command or an NVIDIA/NCCL wheel in uv.lock.
 numpy==1.26.4
-pandas==2.2.2
-scikit-learn==1.9.1
 scipy==1.17.1
-joblib==1.4.2
 xgboost-cpu==3.4.1
 dnspython==2.9.0
 tldextract==5.1.3
@@ -38,7 +37,6 @@ starlette==1.10.0
 uvicorn==0.34.0
 pydantic==2.10.4
 SQLAlchemy==2.0.52
-alembic==1.19.1
 psycopg2-binary==2.9.12
 redis==5.2.1
 qstash==3.4.0

@@ -11,10 +11,11 @@
 # lives on the Vercel project, not in this file. Never put GROQ_API_KEY or
 # SPHINX_API_KEY there.
 #
-# Training uses requirements-serve.txt. requirements.txt pins xgboost==2.1.4,
-# whose Linux wheel needs nvidia-nccl-cu12, and that library does not fit the
-# function. The booster has to be pickled by the same xgboost-cpu the
-# function imports. Docker CI still trains from requirements.txt.
+# Training and migrations use requirements-train-serve.txt: the function's
+# set (xgboost-cpu) plus scikit-learn, pandas and alembic, none of which ship
+# in the function. requirements.txt pins xgboost==2.1.4, whose Linux wheel
+# needs nvidia-nccl-cu12. The model is saved in native XGBoost format, so the
+# function loads it without scikit-learn. Docker CI trains from requirements.txt.
 
 name: Deploy Vercel
 
@@ -44,10 +45,11 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      # uv.lock (the requirements-serve.txt set) unpacks to ~330 MB, over the
-      # 225 MB standard limit. This opts the build into large functions (up
-      # to 5 GB), which install the wheels from uv.lock outside the .func
-      # directory. scripts/vercel_build.sh sets it again.
+      # uv.lock (the requirements-serve.txt set) unpacked to ~330 MB with
+      # scikit-learn and pandas, over the 225 MB standard limit. This opts the
+      # build into large functions (up to 5 GB), which install the wheels from
+      # uv.lock outside the .func directory. scripts/vercel_build.sh sets it
+      # again. Drop it only after check_function_bundle.py measures < 225 MB.
       VERCEL_SUPPORT_LARGE_FUNCTIONS: "1"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -58,12 +60,14 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements-serve.txt
+          cache-dependency-path: |
+            requirements-serve.txt
+            requirements-train-serve.txt
 
       - name: Train the served model
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-serve.txt
+          pip install -r requirements-train-serve.txt
           pip install -e . --no-deps
           python scripts/06_train_final.py
 

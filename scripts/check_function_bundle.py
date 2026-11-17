@@ -32,9 +32,17 @@ ROOT = Path(__file__).resolve().parent.parent
 FUNCTIONS = ROOT / ".vercel" / "output" / "functions"
 STATIC = ROOT / ".vercel" / "output" / "static"
 PROJECT = ROOT / ".vercel" / "project.json"
-REQUIRED = {"phishing", "fastapi", "xgboost-cpu", "scikit-learn", "numpy", "pandas"}
+REQUIRED = {"phishing", "fastapi", "xgboost-cpu", "numpy"}
 FORBIDDEN_PREFIXES = ("nvidia-",)
-FORBIDDEN_NAMES = {"xgboost"}  # the GPU build, which links libnccl
+# xgboost: the GPU build, which links libnccl. scikit-learn and pandas: the
+# served model is native XGBoost, and xgboost imports both at start-up when
+# they are installed, which slows every cold start.
+FORBIDDEN_NAMES = {"xgboost", "scikit-learn", "pandas"}
+FORBIDDEN_REASONS = {
+    "xgboost": "pulls in the NCCL wheel",
+    "scikit-learn": "is training-only and slows xgboost's import",
+    "pandas": "is training-only and slows xgboost's import",
+}
 
 
 def directory_size(path: Path) -> int:
@@ -93,7 +101,8 @@ def lock_errors() -> list[str]:
     ]
     for name in sorted(names):
         if name in FORBIDDEN_NAMES or name.startswith(FORBIDDEN_PREFIXES):
-            errors.append(f"uv.lock installs {name}, which pulls in the NCCL wheel")
+            reason = FORBIDDEN_REASONS.get(name, "pulls in the NCCL wheel")
+            errors.append(f"uv.lock installs {name}, which {reason}")
     return errors
 
 

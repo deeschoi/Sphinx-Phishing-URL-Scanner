@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import numpy as np
-import pandas as pd
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 def _unwrap(estimator):
@@ -27,11 +31,16 @@ def _tree_explainer(estimator, X_background: pd.DataFrame):
         return shap.TreeExplainer(model, data=X_background, model_output="raw")
 
 
-def _xgboost_contributions(estimator, X: pd.DataFrame) -> np.ndarray | None:
-    """Path-dependent TreeSHAP from the booster, in frame column order.
+def _xgboost_contributions(
+    estimator, X: Any, feature_names: list[str] | None = None
+) -> np.ndarray | None:
+    """Path-dependent TreeSHAP from the booster, in the caller's column order.
 
     This is the algorithm ``shap.TreeExplainer`` runs for XGBoost. Calling it
     directly keeps shap, numba, and llvmlite out of the served bundle.
+
+    ``X`` is a DataFrame, or a 2-D array whose columns are ``feature_names``
+    (the scan path, which does not import pandas).
     """
     model = _unwrap(estimator)
     get_booster = getattr(model, "get_booster", None)
@@ -40,38 +49,53 @@ def _xgboost_contributions(estimator, X: pd.DataFrame) -> np.ndarray | None:
     import xgboost as xgb
 
     booster = get_booster()
-    frame = X
-    caller_columns = [str(column) for column in X.columns]
+    if hasattr(X, "columns"):
+        caller_columns = [str(column) for column in X.columns]
+        array = X.to_numpy(dtype=np.float64)
+    else:
+        if feature_names is None:
+            raise ValueError("feature_names is required when X is an array")
+        caller_columns = [str(name) for name in feature_names]
+        array = np.asarray(X, dtype=np.float64)
+        if array.ndim == 1:
+            array = array.reshape(1, -1)
+    if array.shape[1] != len(caller_columns):
+        raise ValueError(f"{array.shape[1]} columns for {len(caller_columns)} feature names")
+
+    columns = caller_columns
     if booster.feature_names:
         expected = [str(name) for name in booster.feature_names]
-        missing = [name for name in expected if name not in frame.columns]
+        missing = [name for name in expected if name not in caller_columns]
         if missing:
             raise ValueError(f"frame is missing booster features: {missing}")
-        frame = frame.loc[:, expected]
-    array = np.ascontiguousarray(frame.to_numpy(dtype=np.float64), dtype=np.float64)
+        array = array[:, [caller_columns.index(name) for name in expected]]
+        columns = expected
+    array = np.ascontiguousarray(array, dtype=np.float64)
     if booster.feature_names:
-        matrix = xgb.DMatrix(
-            array, feature_names=[str(column) for column in frame.columns]
-        )
+        matrix = xgb.DMatrix(array, feature_names=columns)
     else:
         matrix = xgb.DMatrix(array)
     contribs = np.asarray(booster.predict(matrix, pred_contribs=True), dtype=np.float64)
     if contribs.ndim == 3:
         contribs = contribs[:, -1, :]
-    if contribs.ndim != 2 or contribs.shape[1] != frame.shape[1] + 1:
+    if contribs.ndim != 2 or contribs.shape[1] != array.shape[1] + 1:
         raise ValueError(
-            f"expected contributions ({frame.shape[0]}, {frame.shape[1] + 1}), "
+            f"expected contributions ({array.shape[0]}, {array.shape[1] + 1}), "
             f"got {contribs.shape}"
         )
     values = contribs[:, :-1]
-    if [str(column) for column in frame.columns] != caller_columns:
-        order = [list(frame.columns).index(name) for name in caller_columns]
-        values = values[:, order]
+    if columns != caller_columns:
+        values = values[:, [columns.index(name) for name in caller_columns]]
     return values
 
 
-def shap_values(estimator, X: pd.DataFrame, background: pd.DataFrame | None = None):
-    values = _xgboost_contributions(estimator, X)
+def shap_values(
+    estimator,
+    X: Any,
+    background: pd.DataFrame | None = None,
+    feature_names: list[str] | None = None,
+):
+    values = _xgboost_contributions(estimator, X, feature_names)
     if values is not None:
         return None, values
 
@@ -87,5 +111,7 @@ def shap_values(estimator, X: pd.DataFrame, background: pd.DataFrame | None = No
 
 
 def global_importance(feature_names: list[str], values: np.ndarray) -> pd.Series:
+    import pandas as pd
+
     mean_abs = np.abs(values).mean(axis=0)
     return pd.Series(mean_abs, index=feature_names).sort_values(ascending=False)

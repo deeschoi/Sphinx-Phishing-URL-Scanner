@@ -249,7 +249,7 @@ jobs:
 
       - name: Train if the artifact is missing
         run: |
-          if [ ! -f artifacts/model.joblib ]; then
+          if [ ! -f artifacts/model_meta.json ]; then
             python -m phishing.cli train
           fi
 

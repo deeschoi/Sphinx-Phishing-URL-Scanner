@@ -804,7 +804,7 @@ def health() -> dict:
 def ready() -> dict:
     """Readiness: can this instance actually serve a scan?
 
-    ``/api/health`` returning ok while ``artifacts/model.joblib`` is missing
+    ``/api/health`` returning ok while ``artifacts/model_meta.json`` is missing
     meant an orchestrator kept routing traffic to an instance that answered
     every scan with a 503.
     """
