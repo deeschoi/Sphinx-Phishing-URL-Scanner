@@ -744,6 +744,21 @@ def test_unreachable_host_reports_a_url_pattern_risk():
     assert result["url_pattern_risk"] in {"phishing", "suspicious", None}
 
 
+@pytest.fixture
+def dead_host(monkeypatch):
+    """Simulate a host whose name does not resolve, without real DNS.
+
+    scan() runs the SSRF guard before the (fake) fetch, and the guard does a
+    real lookup. A resolver that sinkholes the domain (one answered
+    inzizi.com with 203.0.113.250) made the guard refuse the URL as
+    non-public, so the test hit UnsafeTargetError instead of the dead-host
+    path it is about.
+    """
+    from phishing import scanner
+
+    monkeypatch.setattr(scanner, "assert_public_url", lambda url: None)
+
+
 def _dns_fail(url: str) -> FetchResult:
     return FetchResult(
         url=url,
@@ -758,7 +773,7 @@ def _dns_fail(url: str) -> FetchResult:
     )
 
 
-def test_unreachable_kit_path_flags_the_url_pattern_chip():
+def test_unreachable_kit_path_flags_the_url_pattern_chip(dead_host):
     """A dead host with a kit landing file must not read as a clean origin."""
     from phishing.scanner import scan
     from phishing.tuning import load_payload
@@ -777,7 +792,7 @@ def test_unreachable_kit_path_flags_the_url_pattern_chip():
     assert "looks like phishing" in result["rationale"]
 
 
-def test_unreachable_homepage_does_not_claim_the_string_is_safe():
+def test_unreachable_homepage_does_not_claim_the_string_is_safe(dead_host):
     """Empty-page kits leave no URL-string evidence once the host is dead."""
     from phishing.scanner import scan
     from phishing.tuning import load_payload
