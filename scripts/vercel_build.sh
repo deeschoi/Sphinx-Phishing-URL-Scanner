@@ -40,4 +40,14 @@ export VERCEL_SUPPORT_LARGE_FUNCTIONS=1
 # log, the UI stays inside the function, and check_function_bundle.py fails.
 export VERCEL_FASTAPI_STATIC_CDN=1
 vercel build --prod --token "$VERCEL_TOKEN"
-python scripts/check_function_bundle.py
+if ! python scripts/check_function_bundle.py; then
+  # The FastAPI static discovery logs why it skipped only at debug level
+  # (import failure, no mounts, missing flag). Rebuild with builder debug on
+  # and print just those lines: the full debug log stays out of the CI log.
+  echo "Rebuilding with VERCEL_BUILDER_DEBUG=1 to show the FastAPI static discovery:" >&2
+  VERCEL_BUILDER_DEBUG=1 vercel build --prod --token "$VERCEL_TOKEN" \
+    > .vercel/build-debug.log 2>&1 || true
+  grep -E -A3 "FastAPI|vc_fastapi_static|static mount|STATIC_CDN" .vercel/build-debug.log >&2 \
+    || echo "(no FastAPI static lines in the debug build)" >&2
+  exit 1
+fi
