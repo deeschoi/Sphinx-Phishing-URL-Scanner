@@ -71,6 +71,9 @@ def test_ui_is_promoted_to_the_cdn():
     assert project["tool"]["vercel"]["fastapi"]["static"]["cdn"] is True
     source = (ROOT / "api" / "main.py").read_text(encoding="utf-8")
     assert "app.frontend(" in source
+    # The builder skips promotion entirely unless this is set at build time.
+    build = (ROOT / "scripts" / "vercel_build.sh").read_text(encoding="utf-8")
+    assert "export VERCEL_FASTAPI_STATIC_CDN=1" in build
     assert "StaticFiles" not in source
 
 

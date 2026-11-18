@@ -51,6 +51,9 @@ jobs:
       # uv.lock outside the .func directory. scripts/vercel_build.sh sets it
       # again. Drop it only after check_function_bundle.py measures < 225 MB.
       VERCEL_SUPPORT_LARGE_FUNCTIONS: "1"
+      # Without this the Python builder skips app.frontend() CDN promotion.
+      # scripts/vercel_build.sh sets it again.
+      VERCEL_FASTAPI_STATIC_CDN: "1"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

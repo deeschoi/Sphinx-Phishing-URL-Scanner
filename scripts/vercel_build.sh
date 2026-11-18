@@ -35,5 +35,9 @@ vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
 # Must be set in this process. `vercel build` reads it from the environment;
 # a Vercel project variable is not required for the size check.
 export VERCEL_SUPPORT_LARGE_FUNCTIONS=1
+# The Python builder (@vercel/python 31+) only copies app.frontend() to the
+# CDN when this is set; without it the step is skipped with a debug-level
+# log, the UI stays inside the function, and check_function_bundle.py fails.
+export VERCEL_FASTAPI_STATIC_CDN=1
 vercel build --prod --token "$VERCEL_TOKEN"
 python scripts/check_function_bundle.py

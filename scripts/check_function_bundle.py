@@ -85,7 +85,8 @@ def static_output_errors() -> list[str]:
     if not (STATIC / "index.html").is_file():
         errors.append(
             f"{STATIC.relative_to(ROOT)}/index.html is missing: the build did not "
-            "promote web/dist to the CDN. Check app.frontend() in api/main.py and "
+            "promote web/dist to the CDN. Check VERCEL_FASTAPI_STATIC_CDN=1 in the "
+            "build environment, app.frontend() in api/main.py, and "
             "[tool.vercel.fastapi.static] cdn = true in pyproject.toml."
         )
     if not any((STATIC / "assets").glob("*.js")):
