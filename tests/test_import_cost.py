@@ -30,3 +30,30 @@ def test_import_app_skips_the_model_stack():
     )
     loaded = json.loads(result.stdout.strip().splitlines()[-1])
     assert loaded == [], f"import app loaded {loaded}"
+
+
+def test_import_app_ignores_runtime_secrets():
+    """Vercel's build imports the app to find app.frontend() for the CDN.
+
+    ``vercel pull`` cannot read Sensitive variables, so REDIS_URL is not a real
+    URL there. If the import touches it, discovery finds no frontend and the
+    deploy fails the static-output check.
+    """
+    import os
+
+    env = {
+        **os.environ,
+        "SPHINX_RATE_LIMIT_BACKEND": "redis",
+        "REDIS_URL": "not-a-redis-url",
+    }
+    code = (
+        "import app; "
+        "groups = getattr(app.app.router, '_low_priority_routes', []); "
+        "print(len(groups))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    if (ROOT / "web" / "dist" / "index.html").is_file():
+        assert result.stdout.strip().splitlines()[-1] == "1"

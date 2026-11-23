@@ -223,6 +223,11 @@ class RedisRateLimiter:
     503. A public demo's rate limit is the only abuse control, so failing
     open would remove it. Reads fail open so a Redis blip does not blank
     History while a scan is already running.
+
+    ``client=None`` resolves :func:`redis_client` on first use, so importing
+    the app never reads ``REDIS_URL``. Vercel's build imports the app to find
+    ``app.frontend()``, and ``vercel pull`` gives Sensitive variables no real
+    value there; parsing the URL at import made that discovery fail.
     """
 
     def __init__(
@@ -230,7 +235,7 @@ class RedisRateLimiter:
         per_minute: int,
         max_concurrent: int,
         *,
-        client,
+        client=None,
         prefix: str,
         fail_closed: bool,
         lease_ttl_seconds: int = 60,
@@ -238,11 +243,17 @@ class RedisRateLimiter:
     ) -> None:
         self.per_minute = max(0, per_minute)
         self.max_concurrent = max(1, max_concurrent)
-        self.client = client
+        self._client = client
         self.prefix = prefix
         self.fail_closed = fail_closed
         self.lease_ttl_seconds = max(1, lease_ttl_seconds)
         self.busy_detail = busy_detail
+
+    @property
+    def client(self):
+        if self._client is None:
+            self._client = redis_client()
+        return self._client
 
     def check(self, client: str, now: float | None = None, cost: int = 1) -> None:
         if self.per_minute <= 0:
@@ -375,7 +386,6 @@ def _build_limiter(
         return RedisRateLimiter(
             per_minute,
             max_concurrent,
-            client=redis_client(),
             prefix=name,
             fail_closed=fail_closed,
             lease_ttl_seconds=lease_ttl_seconds(),
