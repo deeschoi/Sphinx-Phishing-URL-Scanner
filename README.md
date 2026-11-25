@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="(https://sphinx-scanner.vercel.app/)">Try Sphinx</a>
+  <a href="https://sphinx-scanner.vercel.app/">Try Sphinx</a>
 </p>
 
 Sphinx is a live phishing scanner. Paste a URL and it fetches the page (JavaScript is never executed), scores the risk with a trained classifier, and shows which signals decided the verdict. It is not the Python documentation generator of the same name.
