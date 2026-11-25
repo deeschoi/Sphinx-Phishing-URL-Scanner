@@ -5,12 +5,12 @@
 </p>
 
 <p align="center">
-  <a href="https://sphinx-phishing-url-scanner.vercel.app">Try Sphinx</a>
+  <a href="(https://sphinx-scanner.vercel.app/)">Try Sphinx</a>
 </p>
 
 Sphinx is a live phishing scanner. Paste a URL and it fetches the page (JavaScript is never executed), scores the risk with a trained classifier, and shows which signals decided the verdict. It is not the Python documentation generator of the same name.
 
-Open **[sphinx-phishing-url-scanner.vercel.app](https://sphinx-phishing-url-scanner.vercel.app)**. No account and no install. Scanner, Batch, History, Stats, and Research work in the browser. Paste your own [Groq](https://console.groq.com/keys) key (`gsk_…`) in the panel when you want an explanation of a scan that already ran. That key lives in the browser’s `sessionStorage`, is sent only on `POST /api/chat` as `X-Groq-Api-Key`, and is not stored on the server. Scans themselves never need a Groq key.
+Open **[https://sphinx-scanner.vercel.app/](https://sphinx-scanner.vercel.app/)**. No account and no install. Scanner, Batch, History, Stats, and Research work in the browser. Paste your own [Groq](https://console.groq.com/keys) key (`gsk_…`) in the panel when you want an explanation of a scan that already ran. That key lives in the browser’s `sessionStorage`, is sent only on `POST /api/chat` as `X-Groq-Api-Key`, and is not stored on the server. Scans themselves never need a Groq key.
 
 This repo began as a DATS 2103 coursework project on the 2012 UCI Phishing Websites table. The original notebook and write-up are unchanged under [`research/`](research/README.md). The scanner Sphinx serves today is trained on [PhiUSIIL](https://archive.ics.uci.edu/dataset/967/phiusiil+phishing+url+dataset) (Prasad & Chandra, 2023).
 
